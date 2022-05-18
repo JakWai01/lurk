@@ -1,9 +1,26 @@
-mod cli;
-
-use std::env;
+use nix::sys::ptrace;
+use nix::unistd::{fork, ForkResult, Pid};
 
 fn main() {
-    let matches = cli::build_cli().get_matches_from(env::args_os());
+    match unsafe{fork()} {
+        Ok(ForkResult::Child) => {
+            run_child();
+        }
 
-    println!("{:?}", matches);
+        Ok(ForkResult::Parent {child}) => {
+            run_parent(child);
+        }
+
+        Err(err) => {
+            panic!("[main] fork() failed: {}", err);
+        }
+    }
+
+    loop{}
+}
+
+fn run_parent(_child: Pid) {}
+
+fn run_child() {
+    ptrace::traceme().unwrap();
 }
