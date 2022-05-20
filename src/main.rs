@@ -24,15 +24,26 @@ fn main() {
 }
 
 fn run_tracer(child: Pid) {
-    wait().unwrap();
+    let mut traced: bool = false;
 
-    match ptrace::getregs(child) {
-        Ok(x) => println!(
-            "Syscall number: {:?}",
-            system_call_names::SYSTEM_CALL_NAMES[(x.orig_rax) as usize]
-        ),
-        Err(x) => println!("{:?}", x),
-    };
+    loop {
+        wait().unwrap();
+
+        if !traced {
+            match ptrace::getregs(child) {
+                Ok(x) => println!(
+                    "Syscall number: {:?}",
+                    system_call_names::SYSTEM_CALL_NAMES[(x.orig_rax) as usize]
+                ),
+                Err(x) => println!("{:?}", x),
+            };
+            traced = true;
+        } else {
+            traced = false;
+        }
+
+        ptrace::syscall(child, None).expect("Failed to continue");
+    }
 }
 
 fn run_tracee() {
