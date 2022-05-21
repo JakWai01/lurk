@@ -1,4 +1,4 @@
-pub static SYSTEM_CALL_NAMES: [&str; 332] = [
+pub static SYSTEM_CALL_NAMES: [&str; 335] = [
     "read",
     "write",
     "open",
@@ -331,4 +331,7 @@ pub static SYSTEM_CALL_NAMES: [&str; 332] = [
     "pkey_mprotect",
     "pkey_alloc",
     "pkey_free",
+    "statx",
+    "io_pgetevents",
+    "rseq"
 ];

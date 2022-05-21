@@ -35,14 +35,17 @@ fn run_tracer(child: Pid) {
                     "Syscall number: {:?}",
                     system_call_names::SYSTEM_CALL_NAMES[(x.orig_rax) as usize]
                 ),
-                Err(x) => println!("{:?}", x),
+                Err(_) => break,
             };
             traced = true;
         } else {
             traced = false;
         }
 
-        ptrace::syscall(child, None).expect("Failed to continue");
+        match ptrace::syscall(child, None) {
+            Ok(_) => continue,
+            Err(_) => break,
+        }
     }
 }
 
@@ -50,7 +53,7 @@ fn run_tracee() {
     ptrace::traceme().unwrap();
     personality(linux_personality::ADDR_NO_RANDOMIZE).unwrap();
 
-    Command::new("ls").exec();
+    Command::new("pwd").exec();
 
     exit(0)
 }
