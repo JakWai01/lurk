@@ -29,18 +29,14 @@ fn run_tracer(child: Pid) {
     loop {
         wait().unwrap();
 
-        if !traced {
-            match ptrace::getregs(child) {
-                Ok(x) => println!(
-                    "Syscall number: {:?}",
-                    system_call_names::SYSTEM_CALL_NAMES[(x.orig_rax) as usize]
-                ),
-                Err(_) => break,
-            };
-            traced = true;
-        } else {
-            traced = false;
-        }
+        match ptrace::getregs(child) {
+            Ok(x) => println!(
+                "Syscall: {:?}, Data: {:?}",
+                system_call_names::SYSTEM_CALL_NAMES[(x.orig_rax) as usize],
+                x.rax,
+            ),
+            Err(_) => break,
+        };
 
         match ptrace::syscall(child, None) {
             Ok(_) => continue,
@@ -53,7 +49,7 @@ fn run_tracee() {
     ptrace::traceme().unwrap();
     personality(linux_personality::ADDR_NO_RANDOMIZE).unwrap();
 
-    Command::new("pwd").exec();
+    Command::new("ls").exec();
 
     exit(0)
 }
