@@ -9,3 +9,5 @@ edition = "2021"
 clap = { version = "3.1.18", features = ["derive"] }
 nix = "0.24.1"
 linux-personality = "1.0"
+libc = "0.2.92"
+byteorder = "1.4.3"
