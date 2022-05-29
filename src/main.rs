@@ -89,10 +89,14 @@ fn run_tracer(child: Pid) {
                                 output.push_str(format!("{:?}", value).as_str());
                             }
                             system_call_names::SystemCallArgumentType::String => {
-                                output.push_str(
-                                    format!("{:?}", read_string(child, reg as *mut c_void))
-                                        .as_str(),
-                                );
+                                let mut string = read_string(child, reg as *mut c_void);
+                                let truncated_string = truncate(string.as_str(), 64);
+                                if string.eq(truncated_string) {
+                                    string = format!("{:?}", string);
+                                } else {
+                                    string = format!("{:?}...", truncated_string);
+                                }
+                                output.push_str(string.as_str());
                             }
                             system_call_names::SystemCallArgumentType::Address => {
                                 output.push_str(format!("{:?}", value).as_str());
@@ -104,7 +108,7 @@ fn run_tracer(child: Pid) {
                     }
 
                     output.push_str(")");
-                    println!("{:?}", output);
+                    println!("{}", output);
                 } else {
                     println!(
                         "[{:?}]: {}() = {:?}",
@@ -173,4 +177,11 @@ fn read_string(pid: Pid, address: AddressType) -> String {
     }
 
     string
+}
+
+fn truncate(s: &str, max_chars: usize) -> &str {
+    match s.char_indices().nth(max_chars) {
+        None => s,
+        Some((idx, _)) => &s[..idx],
+    }
 }
