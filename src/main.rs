@@ -27,6 +27,8 @@ fn main() {
     }
 }
 
+// The second rax contains the return value
+// If this is larger than 10000, we can assume it is an address and has to be converted to hex
 fn run_tracer(child: Pid) {
     loop {
         wait().unwrap();
@@ -34,23 +36,67 @@ fn run_tracer(child: Pid) {
         let reg;
 
         match ptrace::getregs(child) {
-            Ok(x) => println!(
-                "[{:?}]: {}() = {:?}",
-                child.as_raw(),
-                system_call_names::SYSTEM_CALL_NAMES[(x.orig_rax) as usize],
-                {
-                    reg = x.rdi;
-                    x
-                },
-            ),
+            Ok(x) => {
+                
+                if x.orig_rax == 0 || x.orig_rax == 1 || x.orig_rax == 2 {
+                    reg = x.rsi;
+
+                    let syscall_tuple = system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize];
+
+                    let argument_type_array: [system_call_names::SystemCallArgumentType; 6] = [syscall_tuple.1, syscall_tuple.2, syscall_tuple.3, syscall_tuple.4, syscall_tuple.5, syscall_tuple.6];
+                    
+                    println!("{:?}", system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0);
+
+                    let mut output = format!("[{:?}] {}(", child.as_raw(), system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0);
+
+                    for (i, arg) in argument_type_array.iter().enumerate() {
+                        let value = match i {
+                            0 => x.rdi,
+                            1 => x.rsi,
+                            2 => x.rdx,
+                            3 => x.r10,
+                            4 => x.r8,
+                            5 => x.r9,
+                            _ => panic!("Invalid system call definition!")
+                        };
+
+
+                        match arg {
+                            system_call_names::SystemCallArgumentType::Integer => {
+                                output.push_str(format!("{:?}, ", value).as_str());
+                            },
+                            system_call_names::SystemCallArgumentType::String => {
+                                output.push_str(format!("{:?}, ", read_string(child, reg as *mut c_void)).as_str());
+                            },
+                            system_call_names::SystemCallArgumentType::Address => {
+                                output.push_str(format!("{:?}, ", value).as_str());
+                            },
+                            system_call_names::SystemCallArgumentType::None => {
+                                continue;
+                            },
+                        }
+                    }
+
+                    output.push_str(")");
+                    println!("{:?}", output);
+                } else {
+                    println!(
+                        "[{:?}]: {}() = {:?}",
+                        child.as_raw(),
+                        system_call_names::SYSTEM_CALL_NAMES[(x.orig_rax) as usize],
+                        {
+                            reg = x.rsi;
+                            x
+                        },
+                    )}
+                }
+            ,
             Err(_) => break,
         };
 
         println!("{:?}", reg);
-        // This isn't a valid condition to filter between addresses and non-addresses
-        if reg > 100000 {
-            let stringer = read_string(child, reg as *mut c_void);
-
+        let stringer = read_string(child, reg as *mut c_void);
+        if stringer != "" {
             println!("{:?}", stringer);
         }
         match ptrace::syscall(child, None) {
@@ -81,9 +127,20 @@ fn read_string(pid: Pid, address: AddressType) -> String {
 
         println!("{:?}", address);
         
-        let res: c_long = ptrace::read(pid, address).unwrap_or_else(|err| {
-            panic!("Failed to read data for pid {}: {}", pid, err);
-        });
+        // let res: c_long = ptrace::read(pid, address).unwrap_or_else(|err| {
+        //     // panic!("Failed to read data for pid {}: {}", pid, err);
+        //     continue;
+        // });
+
+        let res: c_long;
+
+        match ptrace::read(pid, address) {
+            Ok(c_long) => {
+                res = c_long
+            },
+            Err(_) => break 'done
+        }
+
         bytes.write_i64::<LittleEndian>(res).unwrap_or_else(|err| {
             panic!("Failed to write {} as i64 LittleEndian: {}", res, err);
         });
