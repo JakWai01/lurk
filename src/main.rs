@@ -106,7 +106,11 @@ fn run_tracer(child: Pid) {
                 output.push_str(")");
                 
                 if second_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
-                    println!("{} = {:?}", output, x.rax);
+                    if (x.rax as i32).abs() > 10000 {
+                        println!("{} = 0x{:x}", output, x.rax as i32);
+                    } else {
+                        println!("{} = {:?}", output, x.rax as i32);
+                    }
                     second_invocation = false;
                 } else {
                     second_invocation = true; 
