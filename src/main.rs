@@ -95,7 +95,11 @@ fn run_tracer(child: Pid) {
                             output.push_str(string.as_str());
                         }
                         system_call_names::SystemCallArgumentType::Address => {
-                            output.push_str(format!("{:?}", value).as_str());
+                            if value == 0 {
+                                output.push_str("NULL");
+                            } else {
+                                output.push_str(format!("0x{:x}", value as i32).as_str());
+                            }
                         }
                         system_call_names::SystemCallArgumentType::None => {
                             continue;
