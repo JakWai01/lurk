@@ -27,6 +27,8 @@ fn main() {
 }
 
 fn run_tracer(child: Pid) {
+    let mut second_invocation = true;
+
     loop {
         wait().unwrap();
 
@@ -102,7 +104,13 @@ fn run_tracer(child: Pid) {
                 }
 
                 output.push_str(")");
-                println!("{}", output);
+                
+                if second_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
+                    println!("{} = {:?}", output, x.rax);
+                    second_invocation = false;
+                } else {
+                    second_invocation = true; 
+                }
             }
             Err(_) => break,
         };
