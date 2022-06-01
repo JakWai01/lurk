@@ -9,8 +9,20 @@ use nix::sys::wait::wait;
 use nix::unistd::{fork, ForkResult, Pid};
 use std::os::unix::process::CommandExt;
 use std::process::{exit, Command};
+use std::env;
+
+mod app;
 
 fn main() {
+    let matches = app::build_app().get_matches_from(env::args_os());
+
+    // To test this argument in development use cargo r -- -n
+    if matches.is_present("number") {
+        println!("Number provided");
+    } else {
+        println!("No argument provided");
+    }
+
     match unsafe { fork() } {
         Ok(ForkResult::Child) => {
             run_tracee();
