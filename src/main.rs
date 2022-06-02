@@ -1,5 +1,9 @@
+mod app;
+mod config;
 mod system_call_names;
 
+use crate::config::Config;
+use anyhow::Result;
 use byteorder::{LittleEndian, WriteBytesExt};
 use libc::{c_long, c_void};
 use linux_personality::personality;
@@ -7,21 +11,14 @@ use nix::sys::ptrace;
 use nix::sys::ptrace::AddressType;
 use nix::sys::wait::wait;
 use nix::unistd::{fork, ForkResult, Pid};
+use std::env;
 use std::os::unix::process::CommandExt;
 use std::process::{exit, Command};
-use std::env;
-
-mod app;
 
 fn main() {
     let matches = app::build_app().get_matches_from(env::args_os());
 
-    // To test this argument in development use cargo r -- -n
-    if matches.is_present("number") {
-        println!("Number provided");
-    } else {
-        println!("No argument provided");
-    }
+    let config = construct_config(matches).unwrap();
 
     match unsafe { fork() } {
         Ok(ForkResult::Child) => {
@@ -29,7 +26,7 @@ fn main() {
         }
 
         Ok(ForkResult::Parent { child }) => {
-            run_tracer(child);
+            run_tracer(child, config);
         }
 
         Err(err) => {
@@ -38,7 +35,7 @@ fn main() {
     }
 }
 
-fn run_tracer(child: Pid) {
+fn run_tracer(child: Pid, config: Config) {
     let mut second_invocation = true;
 
     loop {
@@ -61,11 +58,21 @@ fn run_tracer(child: Pid) {
                     syscall_tuple.6,
                 ];
 
-                let mut output = format!(
-                    "[{:?}] {}(",
-                    child.as_raw(),
-                    system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0
-                );
+                let mut output = if config.syscall_number {
+                    format!(
+                        "[{:?}] {:>3}: {}(",
+                        child.as_raw(),
+                        x.orig_rax,
+                        system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0
+                    )
+                } else {
+                    format!(
+                        "[{:?}] {}(",
+                        child.as_raw(),
+                        system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0
+                    )
+                };
+
                 let mut first_comma = true;
 
                 for (i, arg) in argument_type_array.iter().enumerate() {
@@ -120,7 +127,6 @@ fn run_tracer(child: Pid) {
                 }
 
                 output.push_str(")");
-                
                 if second_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
                     if (x.rax as i32).abs() > 10000 {
                         println!("{} = 0x{:x}", output, x.rax as i32);
@@ -129,7 +135,7 @@ fn run_tracer(child: Pid) {
                     }
                     second_invocation = false;
                 } else {
-                    second_invocation = true; 
+                    second_invocation = true;
                 }
             }
             Err(_) => break,
@@ -190,4 +196,10 @@ fn truncate(s: &str, max_chars: usize) -> &str {
         None => s,
         Some((idx, _)) => &s[..idx],
     }
+}
+
+fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
+    let syscall_number = matches.is_present("syscall-number");
+
+    Ok(Config { syscall_number })
 }
