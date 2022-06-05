@@ -47,6 +47,7 @@ fn run_tracer(child: Pid, config: Config) {
 
         match ptrace::getregs(child) {
             Ok(x) => {
+
                 reg = x.rsi;
 
                 let syscall_tuple = system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize];
@@ -130,7 +131,7 @@ fn run_tracer(child: Pid, config: Config) {
 
                 output.push_str(")");
                 if second_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
-                    if (x.rax as i32).abs() > 10000 {
+                    if (x.rax as i32).abs() > 32768 {
                         println!("{} = {}", output, Yellow.bold().paint(format!("0x{:x}", x.rax as i32)));
                     } else {
                         if (x.rax as i32) < 0 {
