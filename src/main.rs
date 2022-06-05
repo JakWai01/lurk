@@ -13,7 +13,9 @@ use nix::sys::wait::wait;
 use nix::unistd::{fork, ForkResult, Pid};
 use std::env;
 use std::os::unix::process::CommandExt;
-use std::process::{exit, Command};
+use std::process::{exit, Command, Stdio};
+use ansi_term::Colour::{Blue, Green, Red, Yellow};
+use ansi_term::Style;
 
 fn main() {
     let matches = app::build_app().get_matches_from(env::args_os());
@@ -60,16 +62,16 @@ fn run_tracer(child: Pid, config: Config) {
 
                 let mut output = if config.syscall_number {
                     format!(
-                        "[{:?}] {:>3}: {}(",
-                        child.as_raw(),
+                        "[{}] {:>3}:x {}(",
+                        Blue.bold().paint(child.as_raw().to_string()),
                         x.orig_rax,
-                        system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0
+                        Style::new().bold().paint(system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0)
                     )
                 } else {
                     format!(
-                        "[{:?}] {}(",
-                        child.as_raw(),
-                        system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0
+                        "[{}] {}(",
+                        Blue.bold().paint(child.as_raw().to_string()),
+                        Style::new().bold().paint(system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0)
                     )
                 };
 
@@ -129,9 +131,13 @@ fn run_tracer(child: Pid, config: Config) {
                 output.push_str(")");
                 if second_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
                     if (x.rax as i32).abs() > 10000 {
-                        println!("{} = 0x{:x}", output, x.rax as i32);
+                        println!("{} = {}", output, Yellow.bold().paint(format!("0x{:x}", x.rax as i32)));
                     } else {
-                        println!("{} = {:?}", output, x.rax as i32);
+                        if (x.rax as i32) < 0 {
+                            println!("{} = {}", output, Red.bold().paint((x.rax as i32).to_string()));
+                        } else {
+                            println!("{} = {}", output, Green.bold().paint((x.rax as i32).to_string()));
+                        }
                     }
                     second_invocation = false;
                 } else {
@@ -152,7 +158,7 @@ fn run_tracee() {
     ptrace::traceme().unwrap();
     personality(linux_personality::ADDR_NO_RANDOMIZE).unwrap();
 
-    Command::new("ls").exec();
+    Command::new("ls").stdout(Stdio::null()).exec();
 
     exit(0)
 }
