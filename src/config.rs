@@ -4,4 +4,7 @@ pub struct Config {
 
     // Process to attach to
     pub process: i32,
+
+    // Command to trace
+    pub command: String,
 }
