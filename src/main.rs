@@ -3,7 +3,9 @@ mod config;
 mod system_call_names;
 
 use crate::config::Config;
-use anyhow::Result;
+use ansi_term::Colour::{Blue, Green, Red, Yellow};
+use ansi_term::Style;
+use anyhow::{Context, Result};
 use byteorder::{LittleEndian, WriteBytesExt};
 use libc::{c_long, c_void};
 use linux_personality::personality;
@@ -14,8 +16,7 @@ use nix::unistd::{fork, ForkResult, Pid};
 use std::env;
 use std::os::unix::process::CommandExt;
 use std::process::{exit, Command, Stdio};
-use ansi_term::Colour::{Blue, Green, Red, Yellow};
-use ansi_term::Style;
+use libc::pid_t;
 
 fn main() {
     let matches = app::build_app().get_matches_from(env::args_os());
@@ -24,7 +25,7 @@ fn main() {
 
     match unsafe { fork() } {
         Ok(ForkResult::Child) => {
-            run_tracee();
+            run_tracee(config);
         }
 
         Ok(ForkResult::Parent { child }) => {
@@ -47,7 +48,6 @@ fn run_tracer(child: Pid, config: Config) {
 
         match ptrace::getregs(child) {
             Ok(x) => {
-
                 reg = x.rsi;
 
                 let syscall_tuple = system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize];
@@ -66,13 +66,17 @@ fn run_tracer(child: Pid, config: Config) {
                         "[{}] {:>3}:x {}(",
                         Blue.bold().paint(child.as_raw().to_string()),
                         x.orig_rax,
-                        Style::new().bold().paint(system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0)
+                        Style::new()
+                            .bold()
+                            .paint(system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0)
                     )
                 } else {
                     format!(
                         "[{}] {}(",
                         Blue.bold().paint(child.as_raw().to_string()),
-                        Style::new().bold().paint(system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0)
+                        Style::new()
+                            .bold()
+                            .paint(system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0)
                     )
                 };
 
@@ -132,12 +136,24 @@ fn run_tracer(child: Pid, config: Config) {
                 output.push_str(")");
                 if second_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
                     if (x.rax as i32).abs() > 32768 {
-                        println!("{} = {}", output, Yellow.bold().paint(format!("0x{:x}", x.rax as i32)));
+                        println!(
+                            "{} = {}",
+                            output,
+                            Yellow.bold().paint(format!("0x{:x}", x.rax as i32))
+                        );
                     } else {
                         if (x.rax as i32) < 0 {
-                            println!("{} = {}", output, Red.bold().paint((x.rax as i32).to_string()));
+                            println!(
+                                "{} = {}",
+                                output,
+                                Red.bold().paint((x.rax as i32).to_string())
+                            );
                         } else {
-                            println!("{} = {}", output, Green.bold().paint((x.rax as i32).to_string()));
+                            println!(
+                                "{} = {}",
+                                output,
+                                Green.bold().paint((x.rax as i32).to_string())
+                            );
                         }
                     }
                     second_invocation = false;
@@ -155,12 +171,17 @@ fn run_tracer(child: Pid, config: Config) {
     }
 }
 
-fn run_tracee() {
+fn run_tracee(config: Config) {
     ptrace::traceme().unwrap();
     personality(linux_personality::ADDR_NO_RANDOMIZE).unwrap();
 
-    Command::new("ls").stdout(Stdio::null()).exec();
+    let pid: pid_t = config.process;
 
+    if config.process != 0 {
+        ptrace::attach(Pid::from_raw(pid)).map_err(|e| format!("Failed to ptrace attach {} ({})", pid, e)).unwrap();
+    } else {
+        Command::new("ls").stdout(Stdio::null()).exec();
+    }
     exit(0)
 }
 
@@ -207,6 +228,18 @@ fn truncate(s: &str, max_chars: usize) -> &str {
 
 fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
     let syscall_number = matches.is_present("syscall-number");
+    
+    let process = matches
+            .value_of("process")
+            .map(|n| n.parse::<i32>())
+            .transpose()
+            .context("Failed to parse --process argument")?
+            .unwrap_or_default();
 
-    Ok(Config { syscall_number })
+    println!("{}", process);
+
+    Ok(Config {
+        syscall_number,
+        process,
+    })
 }

@@ -6,8 +6,14 @@ pub fn build_app() -> Command<'static> {
             Arg::new("syscall-number")
                 .long("syscall-number")
                 .short('n')
-                .help("Display system call numbers")
+                .help("Display system call numbers"),
+        )
+        .arg(
+            Arg::new("process")
+                .long("process")
+                .short('p')
+                .takes_value(true)
+                .help("Attach to a running process"),
         );
-    
     app
 }
