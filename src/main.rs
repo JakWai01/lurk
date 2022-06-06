@@ -31,7 +31,6 @@ fn main() {
             .unwrap();
 
         run_tracer(Pid::from_raw(pid), config);
-
     } else {
         match unsafe { fork() } {
             Ok(ForkResult::Child) => {
@@ -126,7 +125,8 @@ fn run_tracer(child: Pid, config: Config) {
                             }
                             system_call_names::SystemCallArgumentType::String => {
                                 let mut string = read_string(child, reg as *mut c_void);
-                                let truncated_string = truncate(string.as_str(), 64);
+                                let truncated_string =
+                                    truncate(string.as_str(), config.string_limit as usize);
                                 if string.eq(truncated_string) {
                                     string = format!("{:?}", string);
                                 } else {
@@ -244,12 +244,20 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
         .transpose()
         .context("Failed to parse --process argument")?
         .unwrap_or_default();
-    
+
+    let string_limit = matches
+        .value_of("string-limit")
+        .map(|n| n.parse::<i32>())
+        .transpose()
+        .context("Failed to parse --string-limit argument")?
+        .unwrap_or_else(|| 32);
+
     let command = matches.value_of("command").unwrap_or_default().to_string();
 
     Ok(Config {
         syscall_number,
         process,
         command,
+        string_limit,
     })
 }

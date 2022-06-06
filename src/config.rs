@@ -7,4 +7,7 @@ pub struct Config {
 
     // Command to trace
     pub command: String,
+
+    // Maximum string size to print
+    pub string_limit: i32,
 }
