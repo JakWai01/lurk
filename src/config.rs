@@ -3,7 +3,7 @@ pub struct Config {
     pub syscall_number: bool,
 
     // Process to attach to
-    pub process: i32,
+    pub attach: i32,
 
     // Command to trace
     pub command: String,

@@ -23,8 +23,8 @@ fn main() {
 
     let config = construct_config(matches).unwrap();
 
-    if config.process != 0 {
-        let pid: pid_t = config.process;
+    if config.attach != 0 {
+        let pid: pid_t = config.attach;
 
         ptrace::attach(Pid::from_raw(pid))
             .map_err(|e| format!("Failed to ptrace attach {} ({})", pid, e))
@@ -238,8 +238,8 @@ fn truncate(s: &str, max_chars: usize) -> &str {
 
 fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
     let syscall_number = matches.is_present("syscall-number");
-    let process = matches
-        .value_of("process")
+    let attach = matches
+        .value_of("attach")
         .map(|n| n.parse::<i32>())
         .transpose()
         .context("Failed to parse --process argument")?
@@ -256,7 +256,7 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
 
     Ok(Config {
         syscall_number,
-        process,
+        attach,
         command,
         string_limit,
     })
