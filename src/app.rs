@@ -7,7 +7,7 @@ pub fn build_app() -> Command<'static> {
             Arg::new("command")
                 .help("Trace command")
                 .index(1)
-                .required_unless_present("process"),
+                .required_unless_present("attach"),
         )
         .arg(
             Arg::new("syscall-number")
@@ -16,8 +16,8 @@ pub fn build_app() -> Command<'static> {
                 .help("Display system call numbers"),
         )
         .arg(
-            Arg::new("process")
-                .long("process")
+            Arg::new("attach")
+                .long("attach")
                 .short('p')
                 .takes_value(true)
                 .help("Attach to a running process"),
