@@ -23,17 +23,28 @@ fn main() {
 
     let config = construct_config(matches).unwrap();
 
-    match unsafe { fork() } {
-        Ok(ForkResult::Child) => {
-            run_tracee(config);
-        }
+    if config.process != 0 {
+        let pid: pid_t = config.process;
 
-        Ok(ForkResult::Parent { child }) => {
-            run_tracer(child, config);
-        }
+        ptrace::attach(Pid::from_raw(pid))
+            .map_err(|e| format!("Failed to ptrace attach {} ({})", pid, e))
+            .unwrap();
 
-        Err(err) => {
-            panic!("[main] fork() failed: {}", err);
+        run_tracer(Pid::from_raw(pid), config);
+
+    } else {
+        match unsafe { fork() } {
+            Ok(ForkResult::Child) => {
+                run_tracee(config);
+            }
+
+            Ok(ForkResult::Parent { child }) => {
+                run_tracer(child, config);
+            }
+
+            Err(err) => {
+                panic!("[main] fork() failed: {}", err);
+            }
         }
     }
 }
@@ -179,15 +190,8 @@ fn run_tracee(config: Config) {
     ptrace::traceme().unwrap();
     personality(linux_personality::ADDR_NO_RANDOMIZE).unwrap();
 
-    let pid: pid_t = config.process;
+    Command::new(config.command).stdout(Stdio::null()).exec();
 
-    if config.process != 0 {
-        ptrace::attach(Pid::from_raw(pid))
-            .map_err(|e| format!("Failed to ptrace attach {} ({})", pid, e))
-            .unwrap();
-    } else {
-        Command::new(config.command).stdout(Stdio::null()).exec();
-    }
     exit(0)
 }
 
@@ -242,8 +246,6 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
         .unwrap_or_default();
     
     let command = matches.value_of("command").unwrap_or_default().to_string();
-
-    println!("{}", process);
 
     Ok(Config {
         syscall_number,
