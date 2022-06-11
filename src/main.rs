@@ -166,15 +166,13 @@ fn run_tracer(child: Pid, config: Config) {
                     }
 
                     output.push_str(")"); 
-                    let mut bytes:  Option<&[u8]> = None;
-
-                    let hex = format!("{} = 0x{:x}", output, x.rax as i32);
-                    let dec = format!("{} = {}", output, x.rax as i32);
 
                     if second_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
                         if (x.rax as i32).abs() > 32768 {
                             if !config.file.is_empty() {
-                                bytes = Some(hex.as_bytes());
+                                if let Some(mut fd) = file {
+                                    write!(&mut fd, "{} = 0x{:x}", output, x.rax as i32);
+                                }
                             } else {
                                 println!(
                                     "{} = {}",
@@ -184,7 +182,9 @@ fn run_tracer(child: Pid, config: Config) {
                             }
                         } else {
                             if !config.file.is_empty() {
-                                bytes = Some(dec.as_bytes());
+                                if let Some(mut fd) = file {
+                                    write!(&mut fd, "{} = {}", output, x.rax as i32);
+                                }
                             } else {
                                 if (x.rax as i32) < 0 {
                                     println!(
@@ -203,13 +203,6 @@ fn run_tracer(child: Pid, config: Config) {
 
                         }
 
-                        if !config.file.is_empty() {
-                            if let Some(mut fd) = file {
-                                if let Some(b) = bytes {
-                                    fd.write_all(b).expect("write failed");
-                                }
-                            }
-                        }
                         second_invocation = false;
                     } else {
                         second_invocation = true;
