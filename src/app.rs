@@ -28,6 +28,13 @@ pub fn build_app() -> Command<'static> {
                 .short('s')
                 .takes_value(true)
                 .help("Maximum string size to print"),
+        )
+        .arg(
+            Arg::new("file")
+                .long("file")
+                .short('o')
+                .takes_value(true)
+                .help("Name of the file to print output to"),
         );
     app
 }

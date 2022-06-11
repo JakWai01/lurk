@@ -10,4 +10,7 @@ pub struct Config {
 
     // Maximum string size to print
     pub string_limit: i32,
+
+    // Name of the file to print output to
+    pub file: String,
 }

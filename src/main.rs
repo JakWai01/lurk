@@ -17,6 +17,9 @@ use nix::unistd::{fork, ForkResult, Pid};
 use std::env;
 use std::os::unix::process::CommandExt;
 use std::process::{exit, Command, Stdio};
+use std::io::Write;
+use std::fs::OpenOptions;
+
 
 fn main() {
     let matches = app::build_app().get_matches_from(env::args_os());
@@ -50,8 +53,23 @@ fn main() {
 
 fn run_tracer(child: Pid, config: Config) {
     let mut second_invocation = true;
+    // let mut file: Option<std::fs::File> = None;
 
+    // if !config.file.is_empty() {
+    //     file = Some(std::fs::File::create(&config.file).expect("create failed!"));
+    // }
+    
     loop {
+        let mut file: Option<std::fs::File> = None;
+
+        if !config.file.is_empty() {
+            if !std::path::Path::new(&config.file).exists() {
+                file = Some(std::fs::File::create(&config.file).expect("create failed!"));
+            } else {
+                file = Some(OpenOptions::new().append(true).open(&config.file).expect("open failed!"));
+            }
+        }
+
         wait().unwrap();
 
         let reg;
@@ -147,27 +165,49 @@ fn run_tracer(child: Pid, config: Config) {
                         }
                     }
 
-                    output.push_str(")");
+                    output.push_str(")"); 
+                    let mut bytes:  Option<&[u8]> = None;
+
+                    let hex = format!("{} = 0x{:x}", output, x.rax as i32);
+                    let dec = format!("{} = {}", output, x.rax as i32);
+
                     if second_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
                         if (x.rax as i32).abs() > 32768 {
-                            println!(
-                                "{} = {}",
-                                output,
-                                Yellow.bold().paint(format!("0x{:x}", x.rax as i32))
-                            );
-                        } else {
-                            if (x.rax as i32) < 0 {
-                                println!(
-                                    "{} = {}",
-                                    output,
-                                    Red.bold().paint((x.rax as i32).to_string())
-                                );
+                            if !config.file.is_empty() {
+                                bytes = Some(hex.as_bytes());
                             } else {
                                 println!(
                                     "{} = {}",
                                     output,
-                                    Green.bold().paint((x.rax as i32).to_string())
+                                    Yellow.bold().paint(format!("0x{:x}", x.rax as i32))
                                 );
+                            }
+                        } else {
+                            if !config.file.is_empty() {
+                                bytes = Some(dec.as_bytes());
+                            } else {
+                                if (x.rax as i32) < 0 {
+                                    println!(
+                                        "{} = {}",
+                                        output,
+                                        Red.bold().paint((x.rax as i32).to_string())
+                                    );
+                                } else {
+                                    println!(
+                                        "{} = {}",
+                                        output,
+                                        Green.bold().paint((x.rax as i32).to_string())
+                                    );
+                                }
+                            }
+
+                        }
+
+                        if !config.file.is_empty() {
+                            if let Some(mut fd) = file {
+                                if let Some(b) = bytes {
+                                    fd.write_all(b).expect("write failed");
+                                }
                             }
                         }
                         second_invocation = false;
@@ -254,10 +294,13 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
 
     let command = matches.value_of("command").unwrap_or_default().to_string();
 
+    let file = matches.value_of("file").unwrap_or_default().to_string();
+
     Ok(Config {
         syscall_number,
         attach,
         command,
         string_limit,
+        file,
     })
 }
