@@ -15,11 +15,10 @@ use nix::sys::ptrace::AddressType;
 use nix::sys::wait::wait;
 use nix::unistd::{fork, ForkResult, Pid};
 use std::env;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::{exit, Command, Stdio};
-use std::io::Write;
-use std::fs::OpenOptions;
-
 
 fn main() {
     let matches = app::build_app().get_matches_from(env::args_os());
@@ -58,7 +57,6 @@ fn run_tracer(child: Pid, config: Config) {
     // if !config.file.is_empty() {
     //     file = Some(std::fs::File::create(&config.file).expect("create failed!"));
     // }
-    
     loop {
         let mut file: Option<std::fs::File> = None;
 
@@ -66,7 +64,12 @@ fn run_tracer(child: Pid, config: Config) {
             if !std::path::Path::new(&config.file).exists() {
                 file = Some(std::fs::File::create(&config.file).expect("create failed!"));
             } else {
-                file = Some(OpenOptions::new().append(true).open(&config.file).expect("open failed!"));
+                file = Some(
+                    OpenOptions::new()
+                        .append(true)
+                        .open(&config.file)
+                        .expect("open failed!"),
+                );
             }
         }
 
@@ -93,22 +96,39 @@ fn run_tracer(child: Pid, config: Config) {
                     ];
 
                     let mut output = if config.syscall_number {
-                        format!(
-                            "[{}] {:>3}:x {}(",
-                            Blue.bold().paint(child.as_raw().to_string()),
-                            x.orig_rax,
-                            Style::new()
-                                .bold()
-                                .paint(system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0)
-                        )
+                        if !config.file.is_empty() {
+                            format!(
+                                "[{}] {:>3}:x {}(",
+                                child.as_raw().to_string(),
+                                x.orig_rax,
+                                system_call_names::SYSTEM_CALLS[x.orig_rax as usize].0
+                            )
+                        } else {
+                            format!(
+                                "[{}] {:>3}:x {}(",
+                                Blue.bold().paint(child.as_raw().to_string()),
+                                x.orig_rax,
+                                Style::new().bold().paint(
+                                    system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0
+                                )
+                            )
+                        }
                     } else {
-                        format!(
-                            "[{}] {}(",
-                            Blue.bold().paint(child.as_raw().to_string()),
-                            Style::new()
-                                .bold()
-                                .paint(system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0)
-                        )
+                        if !config.file.is_empty() {
+                            format!(
+                                "[{}] {}(",
+                                child.as_raw().to_string(),
+                                system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0
+                            )
+                        } else {
+                            format!(
+                                "[{}] {}(",
+                                Blue.bold().paint(child.as_raw().to_string()),
+                                Style::new().bold().paint(
+                                    system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0
+                                )
+                            )
+                        }
                     };
 
                     let mut first_comma = true;
@@ -165,13 +185,13 @@ fn run_tracer(child: Pid, config: Config) {
                         }
                     }
 
-                    output.push_str(")"); 
+                    output.push_str(")");
 
                     if second_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
                         if (x.rax as i32).abs() > 32768 {
                             if !config.file.is_empty() {
                                 if let Some(mut fd) = file {
-                                    write!(&mut fd, "{} = 0x{:x}", output, x.rax as i32);
+                                    write!(&mut fd, "{} = 0x{:x}\n", output, x.rax as i32);
                                 }
                             } else {
                                 println!(
@@ -183,7 +203,7 @@ fn run_tracer(child: Pid, config: Config) {
                         } else {
                             if !config.file.is_empty() {
                                 if let Some(mut fd) = file {
-                                    write!(&mut fd, "{} = {}", output, x.rax as i32);
+                                    write!(&mut fd, "{} = {}\n", output, x.rax as i32);
                                 }
                             } else {
                                 if (x.rax as i32) < 0 {
@@ -200,7 +220,6 @@ fn run_tracer(child: Pid, config: Config) {
                                     );
                                 }
                             }
-
                         }
 
                         second_invocation = false;
