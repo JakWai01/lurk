@@ -20,6 +20,8 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::{exit, Command, Stdio};
+use std::time::{SystemTime};
+use std::{thread, time};
 
 fn main() {
     let matches = app::build_app().get_matches_from(env::args_os());
@@ -53,9 +55,12 @@ fn main() {
 
 fn run_tracer(child: Pid, config: Config) {
     let mut second_invocation = true;
-
+    let mut start: Option<std::time::SystemTime> = None;
+    
     let mut syscall_cache: Vec<u64> = Vec::new();
     let mut error_cache: Vec<u64> = Vec::new();
+
+    let mut time_spent: HashMap<u64, u64> = HashMap::new();
 
     loop {
         let mut file: Option<std::fs::File> = None;
@@ -186,6 +191,22 @@ fn run_tracer(child: Pid, config: Config) {
                     output.push_str(")");
 
                     if second_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
+                        // Testing the timer since most operations are way to fast
+                        thread::sleep(time::Duration::from_millis(1));
+                        let end = SystemTime::now();
+
+                        if let Some(i) = start {
+                            let elapsed = end.duration_since(i).unwrap_or_default().as_millis();
+                            let syscall = x.orig_rax as u64;
+
+                            if let Some(old_value) = time_spent.get(&syscall) {
+                                let new_value = old_value + elapsed as u64;
+                                time_spent.insert(syscall, new_value);
+                            } else {
+                                time_spent.insert(syscall, elapsed as u64);
+                            }
+                        };
+
                         if (x.rax as i32).abs() > 32768 {
                             if !config.file.is_empty() {
                                 if let Some(mut fd) = file {
@@ -222,11 +243,13 @@ fn run_tracer(child: Pid, config: Config) {
                         }
 
                         second_invocation = false;
+                        start = None;
 
                         if config.summary_only {
                             syscall_cache.push(x.orig_rax);
                         }
                     } else {
+                        start = Some(SystemTime::now());
                         second_invocation = true;
                     }
                 }
@@ -241,31 +264,61 @@ fn run_tracer(child: Pid, config: Config) {
     }
 
     if config.summary_only {
+        let mut time = 0;
+        for value in time_spent.values() {
+            time += value;
+        }
+
         println!("% time     seconds  usecs/call     calls    errors syscall");
         println!("------ ----------- ----------- --------- --------- ----------------");
 
-        let syscall_map = count_element_function(syscall_cache);
+        let syscall_map = count_element_function(&syscall_cache);
         let mut syscall_sorted: Vec<_> = syscall_map.iter().collect();
         syscall_sorted.sort_by(|x, y| x.0.cmp(&y.0));
 
         let error_map = count_element_function(error_cache);
-        let mut error_sorted: Vec<_> = error_map.iter().collect();
-        error_sorted.sort_by(|x, y| x.0.cmp(&y.0));
+        let mut error_count = 0;
 
-        for (key, value) in syscall_sorted {
+        for (key, value) in &syscall_sorted {
             println!(
-                "                                   {:>5}     {:>5} {}",
+                "{}    {}        {}     {:>5}     {:>5} {}",
+                {
+                    if let Some(i) = time_spent.get(key) {
+                        format!("{:>6.2}", *i as f32 / (time as f32 / 100 as f32) as f32)
+                    } else {
+                        format!("  0.00")
+                    }
+                },
+                {
+                    if let Some(i) = time_spent.get(key) {
+                        format!("{:>6.6}", *i as f32/1000 as f32)
+                    } else {
+                        format!("0.000000")
+                    }
+                },
+                {
+                    if let Some(i) = time_spent.get(key) {
+                        format!("{:.0}", (*i as f32/1000 as f32)/(**value as f32) * 1000000 as f32)
+                    } else {
+                        format!("   0")
+                    }
+                },
                 value,
                 {
                     if let Some(i) = error_map.get(key) {
+                        error_count += i;
                         format!("{}", i)
                     } else {
                         format!("")
                     }
                 },
-                system_call_names::SYSTEM_CALLS[*key as usize].0
+                system_call_names::SYSTEM_CALLS[***key as usize].0
             );
         }
+        
+        let syscall_length = syscall_cache.len();
+        println!("------ ----------- ----------- --------- --------- ----------------");
+        println!("100.00       {}         {:.0}       {}        {} total", time as f32 / 1000 as f32, (time as f32 / syscall_length as f32) *  1000 as f32, time, error_count)
     }
 }
 
