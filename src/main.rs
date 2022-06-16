@@ -55,6 +55,7 @@ fn run_tracer(child: Pid, config: Config) {
     let mut second_invocation = true;
 
     let mut syscall_cache: Vec<u64> = Vec::new();
+    let mut error_cache: Vec<u64> = Vec::new();
 
     loop {
         let mut file: Option<std::fs::File> = None;
@@ -204,6 +205,7 @@ fn run_tracer(child: Pid, config: Config) {
                                 }
                             } else {
                                 if (x.rax as i32) < 0 {
+                                    error_cache.push(x.orig_rax);
                                     println!(
                                         "{} = {}",
                                         output,
@@ -242,14 +244,25 @@ fn run_tracer(child: Pid, config: Config) {
         println!("% time     seconds  usecs/call     calls    errors syscall");
         println!("------ ----------- ----------- --------- --------- ----------------");
 
-        let map = count_element_function(syscall_cache);
-        let mut sorted: Vec<_> = map.iter().collect();
-        sorted.sort_by(|x, y| x.0.cmp(&y.0));
+        let syscall_map = count_element_function(syscall_cache);
+        let mut syscall_sorted: Vec<_> = syscall_map.iter().collect();
+        syscall_sorted.sort_by(|x, y| x.0.cmp(&y.0));
 
-        for (key, value) in sorted {
+        let error_map = count_element_function(error_cache);
+        let mut error_sorted: Vec<_> = error_map.iter().collect();
+        error_sorted.sort_by(|x, y| x.0.cmp(&y.0));
+
+        for (key, value) in syscall_sorted {
             println!(
-                "                                   {:>5}           {}",
+                "                                   {:>5}     {:>5} {}",
                 value,
+                {
+                    if let Some(i) = error_map.get(key) {
+                        format!("{}", i)
+                    } else {
+                        format!("")
+                    }
+                },
                 system_call_names::SYSTEM_CALLS[*key as usize].0
             );
         }
