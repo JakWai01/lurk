@@ -318,7 +318,7 @@ fn run_tracer(child: Pid, config: Config) {
         
         let syscall_length = syscall_cache.len();
         println!("------ ----------- ----------- --------- --------- ----------------");
-        println!("100.00       {}         {:.0}       {}        {} total", time as f32 / 1000 as f32, (time as f32 / syscall_length as f32) *  1000 as f32, time, error_count)
+        println!("100.00    {:.6}         {:.0}       {}        {} total", time as f32 / 1000 as f32, (time as f32 / syscall_length as f32) *  1000 as f32, time, error_count)
     }
 }
 
