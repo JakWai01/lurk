@@ -35,6 +35,12 @@ pub fn build_app() -> Command<'static> {
                 .short('o')
                 .takes_value(true)
                 .help("Name of the file to print output to"),
+        )
+        .arg(
+            Arg::new("summary-only")
+                .long("summary-only")
+                .short('c')
+                .help("Report a summary instead of the regular output"),
         );
     app
 }

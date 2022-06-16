@@ -13,4 +13,7 @@ pub struct Config {
 
     // Name of the file to print output to
     pub file: String,
+
+    // Summary only
+    pub summary_only: bool,
 }

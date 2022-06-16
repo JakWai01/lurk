@@ -14,6 +14,7 @@ use nix::sys::ptrace;
 use nix::sys::ptrace::AddressType;
 use nix::sys::wait::wait;
 use nix::unistd::{fork, ForkResult, Pid};
+use std::collections::HashMap;
 use std::env;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -52,11 +53,9 @@ fn main() {
 
 fn run_tracer(child: Pid, config: Config) {
     let mut second_invocation = true;
-    // let mut file: Option<std::fs::File> = None;
 
-    // if !config.file.is_empty() {
-    //     file = Some(std::fs::File::create(&config.file).expect("create failed!"));
-    // }
+    let mut syscall_cache: Vec<u64> = Vec::new();
+
     loop {
         let mut file: Option<std::fs::File> = None;
 
@@ -79,8 +78,6 @@ fn run_tracer(child: Pid, config: Config) {
 
         match ptrace::getregs(child) {
             Ok(x) => {
-                // println!("{:?}", x);
-
                 if x.orig_rax < 336 {
                     reg = x.rsi;
 
@@ -223,6 +220,10 @@ fn run_tracer(child: Pid, config: Config) {
                         }
 
                         second_invocation = false;
+
+                        if config.summary_only {
+                            syscall_cache.push(x.orig_rax);
+                        }
                     } else {
                         second_invocation = true;
                     }
@@ -234,6 +235,23 @@ fn run_tracer(child: Pid, config: Config) {
         match ptrace::syscall(child, None) {
             Ok(_) => continue,
             Err(_) => break,
+        }
+    }
+
+    if config.summary_only {
+        println!("% time     seconds  usecs/call     calls    errors syscall");
+        println!("------ ----------- ----------- --------- --------- ----------------");
+
+        let map = count_element_function(syscall_cache);
+        let mut sorted: Vec<_> = map.iter().collect();
+        sorted.sort_by(|x, y| x.0.cmp(&y.0));
+
+        for (key, value) in sorted {
+            println!(
+                "                                   {:>5}           {}",
+                value,
+                system_call_names::SYSTEM_CALLS[*key as usize].0
+            );
         }
     }
 }
@@ -308,11 +326,28 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
 
     let file = matches.value_of("file").unwrap_or_default().to_string();
 
+    let summary_only = matches.is_present("summary-only");
+
     Ok(Config {
         syscall_number,
         attach,
         command,
         string_limit,
         file,
+        summary_only,
     })
+}
+
+fn count_element_function<I>(it: I) -> HashMap<I::Item, usize>
+where
+    I: IntoIterator,
+    I::Item: Eq + core::hash::Hash,
+{
+    let mut result = HashMap::new();
+
+    for item in it {
+        *result.entry(item).or_insert(0) += 1;
+    }
+
+    result
 }
