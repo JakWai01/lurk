@@ -166,8 +166,7 @@ fn run_tracer(child: Pid, config: Config) {
                             }
                             system_call_names::SystemCallArgumentType::String => {
                                 let mut string = read_string(child, reg as *mut c_void);
-                                let truncated_string =
-                                    truncate(string.as_str(), config.string_limit as usize);
+                                let truncated_string = if config.no_abbrev { string.as_str() } else {truncate(string.as_str(), config.string_limit as usize)};
                                 if string.eq(truncated_string) {
                                     string = format!("{:?}", string);
                                 } else {
@@ -408,6 +407,8 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
 
     let failed_only = matches.is_present("failed-only");
 
+    let no_abbrev = matches.is_present("no-abbrev");
+
     Ok(Config {
         syscall_number,
         attach,
@@ -417,7 +418,8 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
         summary_only,
         summary,
         successful_only,
-        failed_only
+        failed_only,
+        no_abbrev,
     })
 }
 

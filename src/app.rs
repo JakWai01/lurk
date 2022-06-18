@@ -59,6 +59,11 @@ pub fn build_app() -> Command<'static> {
                 .long("failed-only")
                 .short('Z')
                 .help("Print only syscalls that returned with an error code"),
+        ).arg(
+            Arg::new("no-abbrev")
+            .long("no-abbrev")
+            .short('v')
+            .help("Print unabbreviated versions of strings")
         );
     app
 }

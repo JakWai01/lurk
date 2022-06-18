@@ -25,4 +25,7 @@ pub struct Config {
 
     // Print only failed syscalls
     pub failed_only: bool,
+
+    // Print unabbreviated strings
+    pub no_abbrev: bool,
 }
