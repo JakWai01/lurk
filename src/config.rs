@@ -16,4 +16,10 @@ pub struct Config {
 
     // Summary only
     pub summary_only: bool,
+
+    // Print only successful syscalls
+    pub successful_only: bool,
+
+    // Print only failed syscalls
+    pub failed_only: bool,
 }

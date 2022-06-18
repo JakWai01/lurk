@@ -213,11 +213,13 @@ fn run_tracer(child: Pid, config: Config) {
                                     write!(&mut fd, "{} = 0x{:x}\n", output, x.rax as i32);
                                 }
                             } else {
-                                println!(
-                                    "{} = {}",
-                                    output,
-                                    Yellow.bold().paint(format!("0x{:x}", x.rax as i32))
-                                );
+                                if !config.failed_only {
+                                    println!(
+                                        "{} = {}",
+                                        output,
+                                        Yellow.bold().paint(format!("0x{:x}", x.rax as i32))
+                                    );
+                                }
                             }
                         } else {
                             if !config.file.is_empty() {
@@ -227,17 +229,23 @@ fn run_tracer(child: Pid, config: Config) {
                             } else {
                                 if (x.rax as i32) < 0 {
                                     error_cache.push(x.orig_rax);
-                                    println!(
-                                        "{} = {}",
-                                        output,
-                                        Red.bold().paint((x.rax as i32).to_string())
-                                    );
+
+                                    if !config.successful_only {
+                                        println!(
+                                            "{} = {}",
+                                            output,
+                                            Red.bold().paint((x.rax as i32).to_string())
+                                        );
+                                    }
                                 } else {
-                                    println!(
-                                        "{} = {}",
-                                        output,
-                                        Green.bold().paint((x.rax as i32).to_string())
-                                    );
+
+                                    if !config.failed_only {
+                                        println!(
+                                            "{} = {}",
+                                            output,
+                                            Green.bold().paint((x.rax as i32).to_string())
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -394,6 +402,10 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
 
     let summary_only = matches.is_present("summary-only");
 
+    let successful_only = matches.is_present("successful-only");
+
+    let failed_only = matches.is_present("failed-only");
+
     Ok(Config {
         syscall_number,
         attach,
@@ -401,6 +413,8 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
         string_limit,
         file,
         summary_only,
+        successful_only,
+        failed_only
     })
 }
 

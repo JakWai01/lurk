@@ -41,6 +41,18 @@ pub fn build_app() -> Command<'static> {
                 .long("summary-only")
                 .short('c')
                 .help("Report a summary instead of the regular output"),
+        )
+        .arg(
+            Arg::new("successful-only")
+                .long("successful-only")
+                .short('z')
+                .help("Print only syscalls that returned without an error code"),
+        )
+        .arg(
+            Arg::new("failed-only")
+                .long("failed-only")
+                .short('Z')
+                .help("Print only syscalls that returned with an error code"),
         );
     app
 }
