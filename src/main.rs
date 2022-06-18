@@ -213,7 +213,7 @@ fn run_tracer(child: Pid, config: Config) {
                                     write!(&mut fd, "{} = 0x{:x}\n", output, x.rax as i32);
                                 }
                             } else {
-                                if !config.failed_only {
+                                if !config.failed_only && !config.summary_only {
                                     println!(
                                         "{} = {}",
                                         output,
@@ -230,7 +230,7 @@ fn run_tracer(child: Pid, config: Config) {
                                 if (x.rax as i32) < 0 {
                                     error_cache.push(x.orig_rax);
 
-                                    if !config.successful_only {
+                                    if !config.successful_only && !config.summary_only {
                                         println!(
                                             "{} = {}",
                                             output,
@@ -239,7 +239,7 @@ fn run_tracer(child: Pid, config: Config) {
                                     }
                                 } else {
 
-                                    if !config.failed_only {
+                                    if !config.failed_only && !config.summary_only {
                                         println!(
                                             "{} = {}",
                                             output,
@@ -253,7 +253,7 @@ fn run_tracer(child: Pid, config: Config) {
                         second_invocation = false;
                         start = None;
 
-                        if config.summary_only {
+                        if config.summary_only || config.summary {
                             syscall_cache.push(x.orig_rax);
                         }
                     } else {
@@ -271,7 +271,7 @@ fn run_tracer(child: Pid, config: Config) {
         }
     }
 
-    if config.summary_only {
+    if config.summary_only || config.summary {
         let mut time = 0;
         for value in time_spent.values() {
             time += value;
@@ -402,6 +402,8 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
 
     let summary_only = matches.is_present("summary-only");
 
+    let summary = matches.is_present("summary");
+
     let successful_only = matches.is_present("successful-only");
 
     let failed_only = matches.is_present("failed-only");
@@ -413,6 +415,7 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
         string_limit,
         file,
         summary_only,
+        summary,
         successful_only,
         failed_only
     })

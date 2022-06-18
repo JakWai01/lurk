@@ -43,6 +43,12 @@ pub fn build_app() -> Command<'static> {
                 .help("Report a summary instead of the regular output"),
         )
         .arg(
+            Arg::new("summary")
+                .long("summary")
+                .short('C')
+                .help("Report a summary in addition to the regular output"),
+        )
+        .arg(
             Arg::new("successful-only")
                 .long("successful-only")
                 .short('z')
