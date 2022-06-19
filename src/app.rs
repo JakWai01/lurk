@@ -3,6 +3,7 @@ use clap::{Arg, Command};
 pub fn build_app() -> Command<'static> {
     let app = Command::new("lurk")
         .author("Jakob Waibel")
+        .version("0.0.1")
         .arg(
             Arg::new("command")
                 .help("Trace command")
