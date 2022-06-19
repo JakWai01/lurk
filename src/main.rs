@@ -190,8 +190,6 @@ fn run_tracer(child: Pid, config: Config) {
                     output.push_str(")");
 
                     if second_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
-                        // Testing the timer since most operations are way to fast
-                        thread::sleep(time::Duration::from_millis(1));
                         let end = SystemTime::now();
 
                         if let Some(i) = start {
