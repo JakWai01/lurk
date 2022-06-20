@@ -13,6 +13,8 @@ use linux_personality::personality;
 use nix::sys::ptrace;
 use nix::sys::ptrace::AddressType;
 use nix::sys::wait::wait;
+use nix::sys::wait::waitpid;
+use nix::sys::wait::WaitStatus;
 use nix::unistd::{fork, ForkResult, Pid};
 use std::collections::HashMap;
 use std::env;
@@ -20,7 +22,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::{exit, Command, Stdio};
-use std::time::{SystemTime};
+use std::time::SystemTime;
 use std::{thread, time};
 
 fn main() {
@@ -56,7 +58,6 @@ fn main() {
 fn run_tracer(child: Pid, config: Config) {
     let mut second_invocation = true;
     let mut start: Option<std::time::SystemTime> = None;
-    
     let mut syscall_cache: Vec<u64> = Vec::new();
     let mut error_cache: Vec<u64> = Vec::new();
 
@@ -166,7 +167,11 @@ fn run_tracer(child: Pid, config: Config) {
                             }
                             system_call_names::SystemCallArgumentType::String => {
                                 let mut string = read_string(child, reg as *mut c_void);
-                                let truncated_string = if config.no_abbrev { string.as_str() } else {truncate(string.as_str(), config.string_limit as usize)};
+                                let truncated_string = if config.no_abbrev {
+                                    string.as_str()
+                                } else {
+                                    truncate(string.as_str(), config.string_limit as usize)
+                                };
                                 if string.eq(truncated_string) {
                                     string = format!("{:?}", string);
                                 } else {
@@ -188,6 +193,10 @@ fn run_tracer(child: Pid, config: Config) {
                     }
 
                     output.push_str(")");
+
+                    if x.orig_rax == 59 {
+                        println!("{:?}", x);
+                    }
 
                     if second_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
                         let end = SystemTime::now();
@@ -235,7 +244,6 @@ fn run_tracer(child: Pid, config: Config) {
                                         );
                                     }
                                 } else {
-
                                     if !config.failed_only && !config.summary_only {
                                         println!(
                                             "{} = {}",
@@ -259,7 +267,10 @@ fn run_tracer(child: Pid, config: Config) {
                     }
                 }
             }
-            Err(_) => break,
+            Err(err) => {
+                println!("{:?}", err);
+                break;
+            }
         };
 
         match ptrace::syscall(child, None) {
@@ -286,26 +297,33 @@ fn run_tracer(child: Pid, config: Config) {
 
         for (key, value) in &syscall_sorted {
             println!(
-                "{}    {}        {}     {:>5}     {:>5} {}",
+                "{:>6} {:>11} {:>11} {:>9} {:>9} {}",
                 {
                     if let Some(i) = time_spent.get(key) {
-                        format!("{:>6.2}", *i as f32 / (time as f32 / 100 as f32) as f32)
+                        if time != 0 {
+                            format!("{:.2}", *i as f32 / (time as f32 / 100 as f32) as f32)
+                        } else {
+                            format!("0.00")
+                        }
                     } else {
-                        format!("  0.00")
+                        format!("0.00")
                     }
                 },
                 {
                     if let Some(i) = time_spent.get(key) {
-                        format!("{:>6.6}", *i as f32/1000 as f32)
+                        format!("{:.6}", *i as f32 / 1000 as f32)
                     } else {
                         format!("0.000000")
                     }
                 },
                 {
                     if let Some(i) = time_spent.get(key) {
-                        format!("{:.0}", (*i as f32/1000 as f32)/(**value as f32) * 1000000 as f32)
+                        format!(
+                            "{:.0}",
+                            (*i as f32 / 1000 as f32) / (**value as f32) * 1000000 as f32
+                        )
                     } else {
-                        format!("   0")
+                        format!("0")
                     }
                 },
                 value,
@@ -320,10 +338,15 @@ fn run_tracer(child: Pid, config: Config) {
                 system_call_names::SYSTEM_CALLS[***key as usize].0
             );
         }
-        
         let syscall_length = syscall_cache.len();
         println!("------ ----------- ----------- --------- --------- ----------------");
-        println!("100.00    {:.6}         {:.0}       {}        {} total", time as f32 / 1000 as f32, (time as f32 / syscall_length as f32) *  1000 as f32, time, error_count)
+        println!(
+            "100.00 {:>11.6} {:>11.0} {:>9} {:>9} total",
+            time as f32 / 1000 as f32,
+            (time as f32 / syscall_length as f32) * 1000 as f32,
+            time,
+            error_count
+        )
     }
 }
 
