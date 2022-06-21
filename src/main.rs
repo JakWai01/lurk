@@ -13,8 +13,6 @@ use linux_personality::personality;
 use nix::sys::ptrace;
 use nix::sys::ptrace::AddressType;
 use nix::sys::wait::wait;
-use nix::sys::wait::waitpid;
-use nix::sys::wait::WaitStatus;
 use nix::unistd::{fork, ForkResult, Pid};
 use std::collections::HashMap;
 use std::env;
@@ -25,11 +23,11 @@ use std::process::{exit, Command, Stdio};
 use std::time::SystemTime;
 
 fn main() {
-
     let matches = app::build_app().get_matches_from(env::args_os());
 
     let config = construct_config(matches).unwrap();
 
+    // Command.exec(config.command)
     println!("{:?}", config.command);
 
     if config.attach != 0 {
@@ -356,7 +354,20 @@ fn run_tracee(config: Config) {
     ptrace::traceme().unwrap();
     personality(linux_personality::ADDR_NO_RANDOMIZE).unwrap();
 
-    Command::new("ls").stdout(Stdio::null()).exec();
+    let mut args: Vec<String> = Vec::new();
+    let mut program = String::from("");
+    for (index, arg) in config.command.iter().enumerate() {
+        if index != 0 {
+            args.push(String::from(arg));
+        } else {
+            program = arg.to_string();
+        }
+    }
+
+    Command::new(program)
+        .args(args)
+        .stdout(Stdio::null())
+        .exec();
 
     exit(0)
 }
@@ -418,7 +429,12 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
         .context("Failed to parse --string-limit argument")?
         .unwrap_or_else(|| 32);
 
-    let command: Vec<_> = matches.values_of("command").unwrap().map(|s| s.to_string()).collect();
+    let command: Vec<_> = matches
+        .values_of("command")
+        .unwrap_or_default()
+        .map(|s| s.to_string())
+        .collect();
+
     let file = matches.value_of("file").unwrap_or_default().to_string();
 
     let summary_only = matches.is_present("summary-only");

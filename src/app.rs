@@ -4,13 +4,7 @@ pub fn build_app() -> Command<'static> {
     let app = Command::new("lurk")
         .author("Jakob Waibel")
         .version("0.0.1")
-        .arg(
-            Arg::new("command")
-                .help("Trace command")
-                .required_unless_present("attach")
-                .takes_value(true)
-                .multiple_values(true).allow_hyphen_values(true),
-        )
+        .trailing_var_arg(true)
         .arg(
             Arg::new("syscall-number")
                 .long("syscall-number")
@@ -67,6 +61,13 @@ pub fn build_app() -> Command<'static> {
                 .long("no-abbrev")
                 .short('v')
                 .help("Print unabbreviated versions of strings"),
+        )
+        .arg(
+            Arg::new("command")
+                .help("Trace command")
+                .required_unless_present("attach")
+                .takes_value(true)
+                .multiple_values(true),
         );
     app
 }
