@@ -23,7 +23,6 @@ use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::{exit, Command, Stdio};
 use std::time::SystemTime;
-use std::{thread, time};
 
 fn main() {
 

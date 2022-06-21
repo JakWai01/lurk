@@ -9,7 +9,7 @@ pub fn build_app() -> Command<'static> {
                 .help("Trace command")
                 .required_unless_present("attach")
                 .takes_value(true)
-                .multiple_values(true),
+                .multiple_values(true).allow_hyphen_values(true),
         )
         .arg(
             Arg::new("syscall-number")
