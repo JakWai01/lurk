@@ -26,9 +26,12 @@ use std::time::SystemTime;
 use std::{thread, time};
 
 fn main() {
+
     let matches = app::build_app().get_matches_from(env::args_os());
 
     let config = construct_config(matches).unwrap();
+
+    println!("{:?}", config.command);
 
     if config.attach != 0 {
         let pid: pid_t = config.attach;
@@ -354,7 +357,7 @@ fn run_tracee(config: Config) {
     ptrace::traceme().unwrap();
     personality(linux_personality::ADDR_NO_RANDOMIZE).unwrap();
 
-    Command::new(config.command).stdout(Stdio::null()).exec();
+    Command::new("ls").stdout(Stdio::null()).exec();
 
     exit(0)
 }
@@ -416,8 +419,7 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
         .context("Failed to parse --string-limit argument")?
         .unwrap_or_else(|| 32);
 
-    let command = matches.value_of("command").unwrap_or_default().to_string();
-
+    let command: Vec<_> = matches.values_of("command").unwrap().map(|s| s.to_string()).collect();
     let file = matches.value_of("file").unwrap_or_default().to_string();
 
     let summary_only = matches.is_present("summary-only");

@@ -7,8 +7,9 @@ pub fn build_app() -> Command<'static> {
         .arg(
             Arg::new("command")
                 .help("Trace command")
-                .index(1)
-                .required_unless_present("attach"),
+                .required_unless_present("attach")
+                .takes_value(true)
+                .multiple_values(true),
         )
         .arg(
             Arg::new("syscall-number")
@@ -60,11 +61,12 @@ pub fn build_app() -> Command<'static> {
                 .long("failed-only")
                 .short('Z')
                 .help("Print only syscalls that returned with an error code"),
-        ).arg(
+        )
+        .arg(
             Arg::new("no-abbrev")
-            .long("no-abbrev")
-            .short('v')
-            .help("Print unabbreviated versions of strings")
+                .long("no-abbrev")
+                .short('v')
+                .help("Print unabbreviated versions of strings"),
         );
     app
 }

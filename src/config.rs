@@ -6,7 +6,7 @@ pub struct Config {
     pub attach: i32,
 
     // Command to trace
-    pub command: String,
+    pub command: Vec<String>,
 
     // Maximum string size to print
     pub string_limit: i32,
