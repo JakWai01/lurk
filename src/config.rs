@@ -28,4 +28,7 @@ pub struct Config {
 
     // Print unabbreviated strings
     pub no_abbrev: bool,
+
+    // Set or remove environment variables
+    pub env: Vec<String>,
 }

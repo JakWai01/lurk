@@ -27,9 +27,6 @@ fn main() {
 
     let config = construct_config(matches).unwrap();
 
-    // Command.exec(config.command)
-    println!("{:?}", config.command);
-
     if config.attach != 0 {
         let pid: pid_t = config.attach;
 
@@ -364,10 +361,19 @@ fn run_tracee(config: Config) {
         }
     }
 
-    Command::new(program)
-        .args(args)
-        .stdout(Stdio::null())
-        .exec();
+    let mut cmd = Command::new(program);
+    cmd.args(args).stdout(Stdio::null());
+
+    for var in config.env {
+        let arg: Vec<String> = var.split("=").map(|s| s.to_string()).collect();
+
+        if arg.len() == 2 {
+            cmd.env(arg[0].as_str(), arg[1].as_str());
+        } else {
+            cmd.env_remove(arg[0].as_str());
+        }
+    }
+    cmd.exec();
 
     exit(0)
 }
@@ -435,6 +441,12 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
         .map(|s| s.to_string())
         .collect();
 
+    let env: Vec<_> = matches
+        .values_of("env")
+        .unwrap_or_default()
+        .map(|s| s.to_string())
+        .collect();
+
     let file = matches.value_of("file").unwrap_or_default().to_string();
 
     let summary_only = matches.is_present("summary-only");
@@ -458,6 +470,7 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
         successful_only,
         failed_only,
         no_abbrev,
+        env,
     })
 }
 

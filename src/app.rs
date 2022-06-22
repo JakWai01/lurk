@@ -68,6 +68,14 @@ pub fn build_app() -> Command<'static> {
                 .required_unless_present("attach")
                 .takes_value(true)
                 .multiple_values(true),
+        )
+        .arg(
+            Arg::new("env")
+                .help("--env var=val adds an environment variable. --env var removes an environment variable.")
+                .long("env")
+                .short('E')
+                .multiple_occurrences(true)
+                .takes_value(true),
         );
     app
 }
