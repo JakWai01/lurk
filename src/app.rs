@@ -76,6 +76,13 @@ pub fn build_app() -> Command<'static> {
                 .short('E')
                 .multiple_occurrences(true)
                 .takes_value(true),
+        )
+        .arg(
+            Arg::new("username")
+                .help("Run the command with uid, gid and supplementary groups of username.")
+                .long("username")
+                .short('u')
+                .takes_value(true),
         );
     app
 }

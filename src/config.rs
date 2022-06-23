@@ -31,4 +31,7 @@ pub struct Config {
 
     // Set or remove environment variables
     pub env: Vec<String>,
+
+    // Run command with uid and gid of username
+    pub username: String,
 }

@@ -21,6 +21,7 @@ use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::{exit, Command, Stdio};
 use std::time::SystemTime;
+use users;
 
 fn main() {
     let matches = app::build_app().get_matches_from(env::args_os());
@@ -373,6 +374,11 @@ fn run_tracee(config: Config) {
             cmd.env_remove(arg[0].as_str());
         }
     }
+
+    if let Some(user) = users::get_user_by_name(&config.username) {
+        cmd.uid(user.uid());
+    }
+
     cmd.exec();
 
     exit(0)
@@ -459,6 +465,8 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
 
     let no_abbrev = matches.is_present("no-abbrev");
 
+    let username = matches.value_of("username").unwrap_or_default().to_string();
+
     Ok(Config {
         syscall_number,
         attach,
@@ -471,6 +479,7 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
         failed_only,
         no_abbrev,
         env,
+        username
     })
 }
 
