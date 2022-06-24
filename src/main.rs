@@ -192,10 +192,6 @@ fn run_tracer(child: Pid, config: Config) {
 
                     output.push_str(")");
 
-                    if x.orig_rax == 59 {
-                        println!("{:?}", x);
-                    }
-
                     if second_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
                         let end = SystemTime::now();
 
@@ -265,8 +261,7 @@ fn run_tracer(child: Pid, config: Config) {
                     }
                 }
             }
-            Err(err) => {
-                println!("{:?}", err);
+            Err(_) => {
                 break;
             }
         };
