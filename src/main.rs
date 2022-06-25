@@ -12,6 +12,7 @@ use libc::{c_long, c_void};
 use linux_personality::personality;
 use nix::sys::ptrace;
 use nix::sys::ptrace::AddressType;
+use nix::sys::ptrace::*;
 use nix::sys::wait::wait;
 use nix::unistd::{fork, ForkResult, Pid};
 use std::collections::HashMap;
@@ -58,7 +59,7 @@ fn run_tracer(child: Pid, config: Config) {
     let mut start: Option<std::time::SystemTime> = None;
     let mut syscall_cache: Vec<u64> = Vec::new();
     let mut error_cache: Vec<u64> = Vec::new();
-
+    let mut set_options: bool = false;
     let mut time_spent: HashMap<u64, u64> = HashMap::new();
 
     loop {
@@ -78,6 +79,18 @@ fn run_tracer(child: Pid, config: Config) {
         }
 
         wait().unwrap();
+
+        if !set_options {
+            if config.follow_forks {
+                ptrace::setoptions(
+                    child,
+                    Options::PTRACE_O_TRACEFORK
+                        | Options::PTRACE_O_TRACEVFORK
+                        | Options::PTRACE_O_TRACECLONE,
+                ).unwrap(); 
+            }
+            set_options = true;
+        }
 
         let reg;
 
@@ -462,6 +475,8 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
 
     let username = matches.value_of("username").unwrap_or_default().to_string();
 
+    let follow_forks = matches.is_present("follow-forks");
+
     Ok(Config {
         syscall_number,
         attach,
@@ -474,7 +489,8 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
         failed_only,
         no_abbrev,
         env,
-        username
+        username,
+        follow_forks,
     })
 }
 

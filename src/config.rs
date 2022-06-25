@@ -34,4 +34,7 @@ pub struct Config {
 
     // Run command with uid and gid of username
     pub username: String,
+
+    // Trace child processes
+    pub follow_forks: bool,
 }

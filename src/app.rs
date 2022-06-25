@@ -83,6 +83,12 @@ pub fn build_app() -> Command<'static> {
                 .long("username")
                 .short('u')
                 .takes_value(true),
+        )
+        .arg(
+            Arg::new("follow-forks")
+            .help("Trace child processes as they are created by currently traced processes.")
+            .long("follow-forks")
+            .short('f')
         );
     app
 }
