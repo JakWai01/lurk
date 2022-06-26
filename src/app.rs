@@ -89,6 +89,12 @@ pub fn build_app() -> Command<'static> {
             .help("Trace child processes as they are created by currently traced processes.")
             .long("follow-forks")
             .short('f')
+        )
+        .arg(
+            Arg::new("syscall-times")
+            .help("Show the time spent in system calls in ms.")
+            .long("syscall-times")
+            .short('T')
         );
     app
 }

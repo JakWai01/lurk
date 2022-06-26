@@ -207,9 +207,10 @@ fn run_tracer(child: Pid, config: Config) {
 
                     if second_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
                         let end = SystemTime::now();
+                        let mut elapsed: u128 = 0;
 
                         if let Some(i) = start {
-                            let elapsed = end.duration_since(i).unwrap_or_default().as_millis();
+                            elapsed = end.duration_since(i).unwrap_or_default().as_millis();
                             let syscall = x.orig_rax as u64;
 
                             if let Some(old_value) = time_spent.get(&syscall) {
@@ -223,40 +224,76 @@ fn run_tracer(child: Pid, config: Config) {
                         if (x.rax as i32).abs() > 32768 {
                             if !config.file.is_empty() {
                                 if let Some(mut fd) = file {
-                                    write!(&mut fd, "{} = 0x{:x}\n", output, x.rax as i32);
+                                    if config.syscall_times {
+                                        write!(&mut fd, "{} = 0x{:x} <{:.6}> \n", output, x.rax as i32, elapsed);
+                                    } else {
+                                        write!(&mut fd, "{} = 0x{:x}\n", output, x.rax as i32);
+                                    }
                                 }
                             } else {
                                 if !config.failed_only && !config.summary_only {
-                                    println!(
-                                        "{} = {}",
-                                        output,
-                                        Yellow.bold().paint(format!("0x{:x}", x.rax as i32))
-                                    );
+                                    if config.syscall_times {
+                                        println!(
+                                            "{} = {} <{:.6}>",
+                                            output,
+                                            Yellow.bold().paint(format!("0x{:x}", x.rax as i32)),
+                                            elapsed
+                                        );
+                                    } else {
+                                        println!(
+                                            "{} = {}",
+                                            output,
+                                            Yellow.bold().paint(format!("0x{:x}", x.rax as i32))
+                                        );
+                                    }
                                 }
                             }
                         } else {
                             if !config.file.is_empty() {
                                 if let Some(mut fd) = file {
-                                    write!(&mut fd, "{} = {}\n", output, x.rax as i32);
+                                    if config.syscall_times {
+                                        write!(&mut fd, "{} = {} <{:.6}>\n", output, x.rax as i32, elapsed);
+                                    } else {
+                                        
+                                        write!(&mut fd, "{} = {}\n", output, x.rax as i32);
+                                    }
                                 }
                             } else {
                                 if (x.rax as i32) < 0 {
                                     error_cache.push(x.orig_rax);
 
                                     if !config.successful_only && !config.summary_only {
-                                        println!(
-                                            "{} = {}",
-                                            output,
-                                            Red.bold().paint((x.rax as i32).to_string())
-                                        );
+                                        if config.syscall_times {
+                                            println!(
+                                                "{} = {} <{:.6}>",
+                                                output,
+                                                Red.bold().paint((x.rax as i32).to_string()),
+                                                elapsed
+                                            );
+                                        } else {
+                                            println!(
+                                                "{} = {}",
+                                                output,
+                                                Red.bold().paint((x.rax as i32).to_string())
+                                            );
+                                        }
                                     }
                                 } else {
                                     if !config.failed_only && !config.summary_only {
-                                        println!(
-                                            "{} = {}",
-                                            output,
-                                            Green.bold().paint((x.rax as i32).to_string())
-                                        );
+                                        if config.syscall_times {
+                                            println!(
+                                                "{} = {} <{:.6}>",
+                                                output,
+                                                Green.bold().paint((x.rax as i32).to_string()),
+                                                elapsed
+                                            );
+                                        } else {
+                                            println!(
+                                                "{} = {}",
+                                                output,
+                                                Green.bold().paint((x.rax as i32).to_string())
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -477,6 +514,8 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
 
     let follow_forks = matches.is_present("follow-forks");
 
+    let syscall_times = matches.is_present("syscall-times");
+
     Ok(Config {
         syscall_number,
         attach,
@@ -490,7 +529,8 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
         no_abbrev,
         env,
         username,
-        follow_forks,
+        follow_forks,  
+        syscall_times,
     })
 }
 

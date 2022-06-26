@@ -37,4 +37,7 @@ pub struct Config {
 
     // Trace child processes
     pub follow_forks: bool,
+
+    // Show the time spent in system calls
+    pub syscall_times: bool,
 }
