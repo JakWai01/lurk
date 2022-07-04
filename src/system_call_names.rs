@@ -10,6 +10,50 @@ pub enum SystemCallArgumentType {
     None,
 }
 
+pub static TRACE_DESC: [i32; 98] = [0, 1, 2, 3, 5, 7, 8, 9, 17, 18, 19, 20, 22, 23, 32, 33, 40, 72, 73, 74, 75, 77, 78, 81, 85, 91, 93, 187, 190, 193, 196, 199, 213, 217, 221, 232, 233, 240, 242, 243, 244, 245, 253, 254, 255, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 275, 276, 277, 278, 280, 281, 282, 283, 284, 285, 286, 287, 289, 290, 291, 292, 293, 294, 295, 296, 298, 300, 301, 303, 304, 306, 308, 313, 316, 319, 320, 321, 322, 323, 326, 327, 328, 332];
+
+pub static TRACE_FILE: [i32; 60] = [2, 4, 6, 21, 29, 76, 79, 80, 82, 83, 84, 85, 86, 87, 88, 89, 90, 92, 94, 132, 133, 134, 137, 138, 155, 161, 163, 165, 166, 167, 168, 179, 188, 189, 191, 192, 194, 195, 197, 198, 235, 254, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 280, 301, 303, 316, 332];
+
+pub static TRACE_IPC: [i32; 12] = [29, 30, 31, 64, 65, 66, 67, 68, 69, 70, 71, 220];
+
+pub static TRACE_NETWORK: [i32; 19] = [41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 181, 182, 299, 307];
+
+pub static TRACE_PROCESS: [i32; 14] = [56, 57, 58, 59, 60, 61, 62, 129, 200, 231, 234, 247, 297, 322];
+
+pub static TRACE_SIGNAL: [i32; 13] = [13, 14, 15, 34, 127, 128, 129, 130, 131, 200, 282, 289, 297];
+
+pub static TRACE_MEMORY: [i32; 23] = [9, 10, 11, 12, 25, 26, 27, 28, 30, 149, 150, 151, 152, 206, 207, 216, 237, 238, 239, 256, 279, 325, 329];
+
+pub static TRACE_STAT: [i32; 1] = [4];
+
+pub static TRACE_LSTAT: [i32; 1] = [6];
+
+pub static TRACE_FSTAT: [i32; 3] = [5, 262, 332];
+
+pub static TRACE_STAT_LIKE: [i32; 5] = [4, 5, 6, 262, 332];
+
+pub static TRACE_STATFS: [i32; 1] = [137];
+
+pub static TRACE_FSTATFS: [i32; 1] = [138];
+
+pub static TRACE_STATFS_LIKE: [i32; 3] = [136, 137, 138];
+
+pub static TRACE_PURE: [i32; 8] = [39, 102, 104, 107, 108, 110, 111, 186];
+
+pub static SYSCALL_NEVER_FAILS: [i32; 12] = [39, 95, 102, 104, 107, 108, 110, 111, 122, 123, 135, 186];
+
+pub static MEMORY_MAPPING_CHANGE: [i32; 10] = [9, 10, 11, 12, 25, 30, 59, 67, 216, 329];
+
+pub static STACKTRACE_CAPTURE_ON_ENTER: [i32; 3] = [59, 60, 231];
+
+pub static TRACE_SECCOMP_DEFAULT: [i32; 2] = [59, 322];
+
+pub static TRACE_CREDS: [i32; 19] = [102, 104, 105, 106, 107, 108, 113, 114, 115, 116, 117, 118, 119, 120, 122, 123, 125, 126, 157];
+
+pub static TRACE_CLOCK: [i32; 8] = [96, 159, 164, 201, 227, 228, 229, 305];
+
+pub static COMM_CHANGE: [i32; 3] = [59, 157, 322];
+
 pub static SYSTEM_CALLS: [(&str, SystemCallArgumentType, SystemCallArgumentType, SystemCallArgumentType, SystemCallArgumentType, SystemCallArgumentType, SystemCallArgumentType); 335] = [
     ("read", SystemCallArgumentType::Integer, SystemCallArgumentType::String, SystemCallArgumentType::Integer, SystemCallArgumentType::None, SystemCallArgumentType::None, SystemCallArgumentType::None),
     ("write", SystemCallArgumentType::Integer, SystemCallArgumentType::String, SystemCallArgumentType::Integer, SystemCallArgumentType::None, SystemCallArgumentType::None, SystemCallArgumentType::None),
