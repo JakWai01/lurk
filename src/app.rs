@@ -95,6 +95,13 @@ pub fn build_app() -> Command<'static> {
             .help("Show the time spent in system calls in ms.")
             .long("syscall-times")
             .short('T')
+        )
+        .arg(
+            Arg::new("expr")
+            .help("A qualifying expression which modifies which events to trace or how to trace them.")
+            .long("expr")
+            .short('e')
+            .takes_value(true)
         );
     app
 }

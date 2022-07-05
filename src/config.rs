@@ -40,4 +40,7 @@ pub struct Config {
 
     // Show the time spent in system calls
     pub syscall_times: bool,
+
+    // A qualifying expression to modify the output
+    pub expr: String,
 }

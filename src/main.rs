@@ -87,7 +87,8 @@ fn run_tracer(child: Pid, config: Config) {
                     Options::PTRACE_O_TRACEFORK
                         | Options::PTRACE_O_TRACEVFORK
                         | Options::PTRACE_O_TRACECLONE,
-                ).unwrap(); 
+                )
+                .unwrap();
             }
             set_options = true;
         }
@@ -225,7 +226,11 @@ fn run_tracer(child: Pid, config: Config) {
                             if !config.file.is_empty() {
                                 if let Some(mut fd) = file {
                                     if config.syscall_times {
-                                        write!(&mut fd, "{} = 0x{:x} <{:.6}> \n", output, x.rax as i32, elapsed);
+                                        write!(
+                                            &mut fd,
+                                            "{} = 0x{:x} <{:.6}> \n",
+                                            output, x.rax as i32, elapsed
+                                        );
                                     } else {
                                         write!(&mut fd, "{} = 0x{:x}\n", output, x.rax as i32);
                                     }
@@ -252,9 +257,12 @@ fn run_tracer(child: Pid, config: Config) {
                             if !config.file.is_empty() {
                                 if let Some(mut fd) = file {
                                     if config.syscall_times {
-                                        write!(&mut fd, "{} = {} <{:.6}>\n", output, x.rax as i32, elapsed);
+                                        write!(
+                                            &mut fd,
+                                            "{} = {} <{:.6}>\n",
+                                            output, x.rax as i32, elapsed
+                                        );
                                     } else {
-                                        
                                         write!(&mut fd, "{} = {}\n", output, x.rax as i32);
                                     }
                                 }
@@ -498,6 +506,12 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
         .map(|s| s.to_string())
         .collect();
 
+    let expr: String = matches
+        .values_of("expr")
+        .unwrap_or_default()
+        .map(|s| s.to_string())
+        .collect();
+
     let file = matches.value_of("file").unwrap_or_default().to_string();
 
     let summary_only = matches.is_present("summary-only");
@@ -529,8 +543,9 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
         no_abbrev,
         env,
         username,
-        follow_forks,  
+        follow_forks,
         syscall_times,
+        expr,
     })
 }
 
