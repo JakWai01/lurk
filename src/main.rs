@@ -62,6 +62,45 @@ fn run_tracer(child: Pid, config: Config) {
     let mut set_options: bool = false;
     let mut time_spent: HashMap<u64, u64> = HashMap::new();
 
+    
+    for var in &config.expr {
+        let arg: Vec<String> = var.split("=").map(|s| s.to_string()).collect();
+
+        // Argument parser for -e flag. This parser should be relocated to a seperate function in the future.
+        match arg[0].as_str() {
+            "t" | "trace" => {
+                let tiles: Vec<String> = arg[1].as_str().split(",").map(|s| s.to_string()).collect();
+                let first_tile: Vec<char> = tiles[0].chars().collect();
+                let is_negation: bool = if first_tile[0] == '!' { true } else { false };
+                
+                println!("{:?}", is_negation);
+                
+                for tile in tiles {
+                    let letter: Vec<char> = tile.chars().collect();
+                    match letter[0] {
+                        '?' => println!("?"),
+                        '/' => println!("/"),
+                        _ => continue,
+                    }
+                }
+            },
+            "a" | "abbrev" => println!("abbrev"),
+            "v" | "verbose" => println!("verbose"),
+            "x" | "raw" => println!("raw"),
+            "s" | "signal" | "signals" => println!("signal"),
+            "r" | "read" | "reads" => println!("read"),
+            "w" | "write" | "writes" => println!("write"),
+            "fault" => println!("fault"),
+            "inject" => println!("inject"),
+            "status" => println!("status"),
+            "q" | "quiet" | "silent" | "silence" => println!("quiet"),
+            "decode-fds" => println!("decode-fds"),
+            "decode-fd" => println!("decode-fd"),
+            "kvm" => println!("kvm"),
+            _ => panic!("Error in expression. Please make sure to use -e correctly."),
+        }
+    }
+
     loop {
         let mut file: Option<std::fs::File> = None;
 
@@ -506,7 +545,7 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
         .map(|s| s.to_string())
         .collect();
 
-    let expr: String = matches
+    let expr: Vec<_> = matches
         .values_of("expr")
         .unwrap_or_default()
         .map(|s| s.to_string())

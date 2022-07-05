@@ -42,5 +42,5 @@ pub struct Config {
     pub syscall_times: bool,
 
     // A qualifying expression to modify the output
-    pub expr: String,
+    pub expr: Vec<String>,
 }

@@ -101,6 +101,7 @@ pub fn build_app() -> Command<'static> {
             .help("A qualifying expression which modifies which events to trace or how to trace them.")
             .long("expr")
             .short('e')
+            .multiple_occurrences(true)
             .takes_value(true)
         );
     app
