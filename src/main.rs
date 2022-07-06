@@ -61,7 +61,9 @@ fn run_tracer(child: Pid, config: Config) {
     let mut error_cache: Vec<u64> = Vec::new();
     let mut set_options: bool = false;
     let mut time_spent: HashMap<u64, u64> = HashMap::new();
-
+    let mut q_mark: Vec<String> = Vec::new(); 
+    let mut slash: Vec<String> = Vec::new();
+    let mut filter: Vec<String> = Vec::new();
     
     for var in &config.expr {
         let arg: Vec<String> = var.split("=").map(|s| s.to_string()).collect();
@@ -69,20 +71,28 @@ fn run_tracer(child: Pid, config: Config) {
         // Argument parser for -e flag. This parser should be relocated to a seperate function in the future.
         match arg[0].as_str() {
             "t" | "trace" => {
-                let tiles: Vec<String> = arg[1].as_str().split(",").map(|s| s.to_string()).collect();
+                let mut tiles: Vec<String> = arg[1].as_str().split(",").map(|s| s.to_string()).collect();
                 let first_tile: Vec<char> = tiles[0].chars().collect();
-                let is_negation: bool = if first_tile[0] == '!' { true } else { false };
+
+                let is_negation: bool = first_tile[0] == '!';
                 
-                println!("{:?}", is_negation);
-                
+                if is_negation {
+                    let letters: Vec<char> = tiles[0].chars().collect(); 
+                    tiles[0] = letters[1..].iter().cloned().collect::<String>();
+                }
+
                 for tile in tiles {
                     let letter: Vec<char> = tile.chars().collect();
                     match letter[0] {
-                        '?' => println!("?"),
-                        '/' => println!("/"),
-                        _ => continue,
+                        '?' => q_mark.push(letter[1..].iter().cloned().collect::<String>()),
+                        '/' => slash.push(letter[1..].iter().cloned().collect::<String>()),
+                        _ =>  filter.push(letter.iter().cloned().collect::<String>()),
                     }
                 }
+
+                println!("{:?}", q_mark);
+                println!("{:?}", slash);
+                println!("{:?}", filter);
             },
             "a" | "abbrev" => println!("abbrev"),
             "v" | "verbose" => println!("verbose"),
