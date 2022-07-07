@@ -15,6 +15,7 @@ use nix::sys::ptrace::AddressType;
 use nix::sys::ptrace::*;
 use nix::sys::wait::wait;
 use nix::unistd::{fork, ForkResult, Pid};
+use regex::Regex;
 use std::collections::HashMap;
 use std::env;
 use std::fs::OpenOptions;
@@ -61,23 +62,24 @@ fn run_tracer(child: Pid, config: Config) {
     let mut error_cache: Vec<u64> = Vec::new();
     let mut set_options: bool = false;
     let mut time_spent: HashMap<u64, u64> = HashMap::new();
-    let mut q_mark: Vec<String> = Vec::new(); 
+    let mut q_mark: Vec<String> = Vec::new();
     let mut slash: Vec<String> = Vec::new();
     let mut filter: Vec<String> = Vec::new();
-    
+    let mut is_negation: bool = false;
+
     for var in &config.expr {
         let arg: Vec<String> = var.split("=").map(|s| s.to_string()).collect();
 
         // Argument parser for -e flag. This parser should be relocated to a seperate function in the future.
         match arg[0].as_str() {
             "t" | "trace" => {
-                let mut tiles: Vec<String> = arg[1].as_str().split(",").map(|s| s.to_string()).collect();
+                let mut tiles: Vec<String> =
+                    arg[1].as_str().split(",").map(|s| s.to_string()).collect();
                 let first_tile: Vec<char> = tiles[0].chars().collect();
 
-                let is_negation: bool = first_tile[0] == '!';
-                
+                is_negation = first_tile[0] == '!';
                 if is_negation {
-                    let letters: Vec<char> = tiles[0].chars().collect(); 
+                    let letters: Vec<char> = tiles[0].chars().collect();
                     tiles[0] = letters[1..].iter().cloned().collect::<String>();
                 }
 
@@ -86,14 +88,10 @@ fn run_tracer(child: Pid, config: Config) {
                     match letter[0] {
                         '?' => q_mark.push(letter[1..].iter().cloned().collect::<String>()),
                         '/' => slash.push(letter[1..].iter().cloned().collect::<String>()),
-                        _ =>  filter.push(letter.iter().cloned().collect::<String>()),
+                        _ => filter.push(letter.iter().cloned().collect::<String>()),
                     }
                 }
-
-                println!("{:?}", q_mark);
-                println!("{:?}", slash);
-                println!("{:?}", filter);
-            },
+            }
             "a" | "abbrev" => println!("abbrev"),
             "v" | "verbose" => println!("verbose"),
             "x" | "raw" => println!("raw"),
@@ -110,6 +108,28 @@ fn run_tracer(child: Pid, config: Config) {
             _ => panic!("Error in expression. Please make sure to use -e correctly."),
         }
     }
+
+    let mut regex_matches: Vec<String> = Vec::new();
+
+    for i in 0..334 {
+        let mut is_match: bool = false;
+        let current_syscall = system_call_names::SYSTEM_CALLS[i as usize].0;
+
+        for pattern in &slash {
+            let re = Regex::new(pattern.as_str()).unwrap();
+            if re.is_match(current_syscall) {
+                is_match = true;
+            }
+        }
+
+        if is_match {
+            regex_matches.push(String::from(current_syscall));
+        }
+    }
+
+    let mut concat_vec: Vec<String> = [&regex_matches[..], &filter[..]].concat();
+    concat_vec.sort();
+    concat_vec.dedup();
 
     loop {
         let mut file: Option<std::fs::File> = None;
@@ -270,69 +290,26 @@ fn run_tracer(child: Pid, config: Config) {
                                 time_spent.insert(syscall, elapsed as u64);
                             }
                         };
-
-                        if (x.rax as i32).abs() > 32768 {
-                            if !config.file.is_empty() {
-                                if let Some(mut fd) = file {
-                                    if config.syscall_times {
-                                        write!(
-                                            &mut fd,
-                                            "{} = 0x{:x} <{:.6}> \n",
-                                            output, x.rax as i32, elapsed
-                                        );
-                                    } else {
-                                        write!(&mut fd, "{} = 0x{:x}\n", output, x.rax as i32);
-                                    }
-                                }
-                            } else {
-                                if !config.failed_only && !config.summary_only {
-                                    if config.syscall_times {
-                                        println!(
-                                            "{} = {} <{:.6}>",
-                                            output,
-                                            Yellow.bold().paint(format!("0x{:x}", x.rax as i32)),
-                                            elapsed
-                                        );
-                                    } else {
-                                        println!(
-                                            "{} = {}",
-                                            output,
-                                            Yellow.bold().paint(format!("0x{:x}", x.rax as i32))
-                                        );
-                                    }
-                                }
-                            }
-                        } else {
-                            if !config.file.is_empty() {
-                                if let Some(mut fd) = file {
-                                    if config.syscall_times {
-                                        write!(
-                                            &mut fd,
-                                            "{} = {} <{:.6}>\n",
-                                            output, x.rax as i32, elapsed
-                                        );
-                                    } else {
-                                        write!(&mut fd, "{} = {}\n", output, x.rax as i32);
-                                    }
-                                }
-                            } else {
-                                if (x.rax as i32) < 0 {
-                                    error_cache.push(x.orig_rax);
-
-                                    if !config.successful_only && !config.summary_only {
+    
+                        if concat_vec.contains(&String::from(
+                            system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0,
+                        )) && !is_negation
+                            || !concat_vec.contains(&String::from(
+                                system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0,
+                            )) && is_negation
+                            || concat_vec.len() == 0
+                        {
+                            if (x.rax as i32).abs() > 32768 {
+                                if !config.file.is_empty() {
+                                    if let Some(mut fd) = file {
                                         if config.syscall_times {
-                                            println!(
-                                                "{} = {} <{:.6}>",
-                                                output,
-                                                Red.bold().paint((x.rax as i32).to_string()),
-                                                elapsed
+                                            write!(
+                                                &mut fd,
+                                                "{} = 0x{:x} <{:.6}> \n",
+                                                output, x.rax as i32, elapsed
                                             );
                                         } else {
-                                            println!(
-                                                "{} = {}",
-                                                output,
-                                                Red.bold().paint((x.rax as i32).to_string())
-                                            );
+                                            write!(&mut fd, "{} = 0x{:x}\n", output, x.rax as i32);
                                         }
                                     }
                                 } else {
@@ -341,15 +318,71 @@ fn run_tracer(child: Pid, config: Config) {
                                             println!(
                                                 "{} = {} <{:.6}>",
                                                 output,
-                                                Green.bold().paint((x.rax as i32).to_string()),
+                                                Yellow
+                                                    .bold()
+                                                    .paint(format!("0x{:x}", x.rax as i32)),
                                                 elapsed
                                             );
                                         } else {
                                             println!(
                                                 "{} = {}",
                                                 output,
-                                                Green.bold().paint((x.rax as i32).to_string())
+                                                Yellow
+                                                    .bold()
+                                                    .paint(format!("0x{:x}", x.rax as i32))
                                             );
+                                        }
+                                    }
+                                }
+                            } else {
+                                if !config.file.is_empty() {
+                                    if let Some(mut fd) = file {
+                                        if config.syscall_times {
+                                            write!(
+                                                &mut fd,
+                                                "{} = {} <{:.6}>\n",
+                                                output, x.rax as i32, elapsed
+                                            );
+                                        } else {
+                                            write!(&mut fd, "{} = {}\n", output, x.rax as i32);
+                                        }
+                                    }
+                                } else {
+                                    if (x.rax as i32) < 0 {
+                                        error_cache.push(x.orig_rax);
+
+                                        if !config.successful_only && !config.summary_only {
+                                            if config.syscall_times {
+                                                println!(
+                                                    "{} = {} <{:.6}>",
+                                                    output,
+                                                    Red.bold().paint((x.rax as i32).to_string()),
+                                                    elapsed
+                                                );
+                                            } else {
+                                                println!(
+                                                    "{} = {}",
+                                                    output,
+                                                    Red.bold().paint((x.rax as i32).to_string())
+                                                );
+                                            }
+                                        }
+                                    } else {
+                                        if !config.failed_only && !config.summary_only {
+                                            if config.syscall_times {
+                                                println!(
+                                                    "{} = {} <{:.6}>",
+                                                    output,
+                                                    Green.bold().paint((x.rax as i32).to_string()),
+                                                    elapsed
+                                                );
+                                            } else {
+                                                println!(
+                                                    "{} = {}",
+                                                    output,
+                                                    Green.bold().paint((x.rax as i32).to_string())
+                                                );
+                                            }
                                         }
                                     }
                                 }
