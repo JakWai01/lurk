@@ -290,7 +290,6 @@ fn run_tracer(child: Pid, config: Config) {
                                 time_spent.insert(syscall, elapsed as u64);
                             }
                         };
-    
                         if concat_vec.contains(&String::from(
                             system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0,
                         )) && !is_negation
@@ -348,7 +347,21 @@ fn run_tracer(child: Pid, config: Config) {
                                         }
                                     }
                                 } else {
-                                    if (x.rax as i32) < 0 {
+                                    if (x.rax as i32) < 0
+                                        && ((!is_negation
+                                            && !q_mark.contains(&String::from(
+                                                system_call_names::SYSTEM_CALLS
+                                                    [(x.orig_rax) as usize]
+                                                    .0,
+                                            )))
+                                            || (is_negation
+                                                && q_mark.contains(&String::from(
+                                                    system_call_names::SYSTEM_CALLS
+                                                        [(x.orig_rax) as usize]
+                                                        .0,
+                                                )))
+                                            || q_mark.len() == 0)
+                                    {
                                         error_cache.push(x.orig_rax);
 
                                         if !config.successful_only && !config.summary_only {
@@ -367,7 +380,9 @@ fn run_tracer(child: Pid, config: Config) {
                                                 );
                                             }
                                         }
-                                    } else {
+                                    } 
+                                    
+                                    if (x.rax as i32) > 0 {
                                         if !config.failed_only && !config.summary_only {
                                             if config.syscall_times {
                                                 println!(
