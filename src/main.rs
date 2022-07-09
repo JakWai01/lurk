@@ -66,6 +66,7 @@ fn run_tracer(child: Pid, config: Config) {
     let mut slash: Vec<String> = Vec::new();
     let mut filter: Vec<String> = Vec::new();
     let mut is_negation: bool = false;
+    let mut keywords: Vec<String> = Vec::new();
 
     for var in &config.expr {
         let arg: Vec<String> = var.split("=").map(|s| s.to_string()).collect();
@@ -88,6 +89,7 @@ fn run_tracer(child: Pid, config: Config) {
                     match letter[0] {
                         '?' => q_mark.push(letter[1..].iter().cloned().collect::<String>()),
                         '/' => slash.push(letter[1..].iter().cloned().collect::<String>()),
+                        '%' => keywords.push(letter[1..].iter().cloned().collect::<String>()),
                         _ => filter.push(letter.iter().cloned().collect::<String>()),
                     }
                 }
@@ -128,6 +130,183 @@ fn run_tracer(child: Pid, config: Config) {
     }
 
     let mut concat_vec: Vec<String> = [&regex_matches[..], &filter[..]].concat();
+
+    for keyword in keywords {
+        match keyword.as_str() {
+            "file" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_FILE[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            }
+            "process" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_PROCESS[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            },
+            "network" | "net" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_NETWORK[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            },
+            "signal" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_SIGNAL[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            },
+            "ipc" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_IPC[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            },
+            "desc" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_DESC[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            },
+            "memory" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_MEMORY[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            },
+            "creds" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_CREDS[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            },
+            "stat" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_STAT[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            },
+            "lstat" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_LSTAT[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            },
+            "fstat" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_FSTAT[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            },
+            "%stat" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_STAT_LIKE[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            },
+            "statfs" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_STATFS[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            },
+            "fstatfs" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_FSTATFS[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            },
+            "%statfs" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_STATFS_LIKE[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            },
+            "clock" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_CLOCK[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            },
+            "pure" => {
+                concat_vec = [
+                    &concat_vec[..],
+                    &system_call_names::TRACE_PURE[..]
+                        .iter()
+                        .map(|e| String::from(system_call_names::SYSTEM_CALLS[*e].0))
+                        .collect::<Vec<String>>()[..],
+                ]
+                .concat();
+            },
+            _ => panic!("This is not a valid option!"),
+        }
+    }
+
     concat_vec.sort();
     concat_vec.dedup();
 
@@ -380,8 +559,7 @@ fn run_tracer(child: Pid, config: Config) {
                                                 );
                                             }
                                         }
-                                    } 
-                                    
+                                    }
                                     if (x.rax as i32) > 0 {
                                         if !config.failed_only && !config.summary_only {
                                             if config.syscall_times {
