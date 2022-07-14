@@ -28,7 +28,7 @@ use users;
 fn main() {
     let matches = app::build_app().get_matches_from(env::args_os());
 
-    let config = construct_config(matches).unwrap();
+    let mut config = construct_config(matches).unwrap();
 
     if config.attach != 0 {
         let pid: pid_t = config.attach;
@@ -55,7 +55,7 @@ fn main() {
     }
 }
 
-fn run_tracer(child: Pid, config: Config) {
+fn run_tracer(child: Pid, mut config: Config) {
     let mut second_invocation = true;
     let mut start: Option<std::time::SystemTime> = None;
     let mut syscall_cache: Vec<u64> = Vec::new();
@@ -102,7 +102,25 @@ fn run_tracer(child: Pid, config: Config) {
             "w" | "write" | "writes" => println!("write"),
             "fault" => println!("fault"),
             "inject" => println!("inject"),
-            "status" => println!("status"),
+            "status" => {
+                let tiles: Vec<String> = arg[1].as_str().split(",").map(|s| s.to_string()).collect();
+                
+                for tile in tiles {
+                    match tile.as_str() {
+                        "successful" => {
+                            config.successful_only = true;
+                        },
+                        "failed" => {
+                            config.failed_only = true;
+                        },
+                        "unfinished" => println!("unfinished"),
+                        "unavailable" => println!("unavailable"),
+                        "detached" => println!("detached"),
+                        "all" => println!("all"),
+                        _ => panic!("Error in expression. Please make sure to use -e signal correctly.")
+                    }
+                }
+            },
             "q" | "quiet" | "silent" | "silence" => println!("quiet"),
             "decode-fds" => println!("decode-fds"),
             "decode-fd" => println!("decode-fd"),
