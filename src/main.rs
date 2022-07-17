@@ -28,7 +28,7 @@ use users;
 fn main() {
     let matches = app::build_app().get_matches_from(env::args_os());
 
-    let mut config = construct_config(matches).unwrap();
+    let config = construct_config(matches).unwrap();
 
     if config.attach != 0 {
         let pid: pid_t = config.attach;
@@ -55,7 +55,7 @@ fn main() {
     }
 }
 
-fn run_tracer(child: Pid, mut config: Config) {
+fn run_tracer(child: Pid, config: Config) {
     let mut second_invocation = true;
     let mut start: Option<std::time::SystemTime> = None;
     let mut syscall_cache: Vec<u64> = Vec::new();
@@ -71,7 +71,6 @@ fn run_tracer(child: Pid, mut config: Config) {
     for var in &config.expr {
         let arg: Vec<String> = var.split("=").map(|s| s.to_string()).collect();
 
-        // Argument parser for -e flag. This parser should be relocated to a seperate function in the future.
         match arg[0].as_str() {
             "t" | "trace" => {
                 let mut tiles: Vec<String> =
@@ -94,38 +93,7 @@ fn run_tracer(child: Pid, mut config: Config) {
                     }
                 }
             }
-            "a" | "abbrev" => println!("abbrev"),
-            "v" | "verbose" => println!("verbose"),
-            "x" | "raw" => println!("raw"),
-            "s" | "signal" | "signals" => println!("signal"),
-            "r" | "read" | "reads" => println!("read"),
-            "w" | "write" | "writes" => println!("write"),
-            "fault" => println!("fault"),
-            "inject" => println!("inject"),
-            "status" => {
-                let tiles: Vec<String> = arg[1].as_str().split(",").map(|s| s.to_string()).collect();
-                
-                for tile in tiles {
-                    match tile.as_str() {
-                        "successful" => {
-                            config.successful_only = true;
-                        },
-                        "failed" => {
-                            config.failed_only = true;
-                        },
-                        "unfinished" => println!("unfinished"),
-                        "unavailable" => println!("unavailable"),
-                        "detached" => println!("detached"),
-                        "all" => println!("all"),
-                        _ => panic!("Error in expression. Please make sure to use -e signal correctly.")
-                    }
-                }
-            },
-            "q" | "quiet" | "silent" | "silence" => println!("quiet"),
-            "decode-fds" => println!("decode-fds"),
-            "decode-fd" => println!("decode-fd"),
-            "kvm" => println!("kvm"),
-            _ => panic!("Error in expression. Please make sure to use -e correctly."),
+            _ => panic!("This command is not supported. Please have a look at the syntax."),
         }
     }
 
