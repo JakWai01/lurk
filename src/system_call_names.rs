@@ -57,22 +57,11 @@ pub static TRACE_STATFS_LIKE: [usize; 3] = [136, 137, 138];
 
 pub static TRACE_PURE: [usize; 8] = [39, 102, 104, 107, 108, 110, 111, 186];
 
-pub static SYSCALL_NEVER_FAILS: [usize; 12] =
-    [39, 95, 102, 104, 107, 108, 110, 111, 122, 123, 135, 186];
-
-pub static MEMORY_MAPPING_CHANGE: [usize; 10] = [9, 10, 11, 12, 25, 30, 59, 67, 216, 329];
-
-pub static STACKTRACE_CAPTURE_ON_ENTER: [usize; 3] = [59, 60, 231];
-
-pub static TRACE_SECCOMP_DEFAULT: [usize; 2] = [59, 322];
-
 pub static TRACE_CREDS: [usize; 19] = [
     102, 104, 105, 106, 107, 108, 113, 114, 115, 116, 117, 118, 119, 120, 122, 123, 125, 126, 157,
 ];
 
 pub static TRACE_CLOCK: [usize; 8] = [96, 159, 164, 201, 227, 228, 229, 305];
-
-pub static COMM_CHANGE: [usize; 3] = [59, 157, 322];
 
 pub static SYSTEM_CALLS: [(
     &str,

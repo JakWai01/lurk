@@ -471,9 +471,9 @@ fn run_tracer(child: Pid, config: Config) {
                                                 &mut fd,
                                                 "{} = 0x{:x} <{:.6}> \n",
                                                 output, x.rax as i32, elapsed
-                                            );
+                                            ).unwrap();
                                         } else {
-                                            write!(&mut fd, "{} = 0x{:x}\n", output, x.rax as i32);
+                                            write!(&mut fd, "{} = 0x{:x}\n", output, x.rax as i32).unwrap();
                                         }
                                     }
                                 } else {
@@ -506,9 +506,9 @@ fn run_tracer(child: Pid, config: Config) {
                                                 &mut fd,
                                                 "{} = {} <{:.6}>\n",
                                                 output, x.rax as i32, elapsed
-                                            );
+                                            ).unwrap();
                                         } else {
-                                            write!(&mut fd, "{} = {}\n", output, x.rax as i32);
+                                            write!(&mut fd, "{} = {}\n", output, x.rax as i32).unwrap();
                                         }
                                     }
                                 } else {
