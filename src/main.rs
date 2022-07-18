@@ -55,68 +55,7 @@ fn main() {
     }
 }
 
-fn run_tracer(child: Pid, config: Config) {
-    let mut second_invocation = true;
-    let mut start: Option<std::time::SystemTime> = None;
-    let mut syscall_cache: Vec<u64> = Vec::new();
-    let mut error_cache: Vec<u64> = Vec::new();
-    let mut set_options: bool = false;
-    let mut time_spent: HashMap<u64, u64> = HashMap::new();
-    let mut q_mark: Vec<String> = Vec::new();
-    let mut slash: Vec<String> = Vec::new();
-    let mut filter: Vec<String> = Vec::new();
-    let mut is_negation: bool = false;
-    let mut keywords: Vec<String> = Vec::new();
-
-    for var in &config.expr {
-        let arg: Vec<String> = var.split("=").map(|s| s.to_string()).collect();
-
-        match arg[0].as_str() {
-            "t" | "trace" => {
-                let mut tiles: Vec<String> =
-                    arg[1].as_str().split(",").map(|s| s.to_string()).collect();
-                let first_tile: Vec<char> = tiles[0].chars().collect();
-
-                is_negation = first_tile[0] == '!';
-                if is_negation {
-                    let letters: Vec<char> = tiles[0].chars().collect();
-                    tiles[0] = letters[1..].iter().cloned().collect::<String>();
-                }
-
-                for tile in tiles {
-                    let letter: Vec<char> = tile.chars().collect();
-                    match letter[0] {
-                        '?' => q_mark.push(letter[1..].iter().cloned().collect::<String>()),
-                        '/' => slash.push(letter[1..].iter().cloned().collect::<String>()),
-                        '%' => keywords.push(letter[1..].iter().cloned().collect::<String>()),
-                        _ => filter.push(letter.iter().cloned().collect::<String>()),
-                    }
-                }
-            }
-            _ => panic!("This command is not supported. Please have a look at the syntax."),
-        }
-    }
-
-    let mut regex_matches: Vec<String> = Vec::new();
-
-    for i in 0..334 {
-        let mut is_match: bool = false;
-        let current_syscall = system_call_names::SYSTEM_CALLS[i as usize].0;
-
-        for pattern in &slash {
-            let re = Regex::new(pattern.as_str()).unwrap();
-            if re.is_match(current_syscall) {
-                is_match = true;
-            }
-        }
-
-        if is_match {
-            regex_matches.push(String::from(current_syscall));
-        }
-    }
-
-    let mut concat_vec: Vec<String> = [&regex_matches[..], &filter[..]].concat();
-
+fn parse_expr(mut concat_vec: Vec<String>, keywords: Vec<String>) -> Vec<String> {
     for keyword in keywords {
         match keyword.as_str() {
             "file" => {
@@ -292,9 +231,74 @@ fn run_tracer(child: Pid, config: Config) {
             _ => panic!("This is not a valid option!"),
         }
     }
-
     concat_vec.sort();
     concat_vec.dedup();
+    concat_vec
+}
+
+fn run_tracer(child: Pid, config: Config) {
+    let mut second_invocation = true;
+    let mut start: Option<std::time::SystemTime> = None;
+    let mut syscall_cache: Vec<u64> = Vec::new();
+    let mut error_cache: Vec<u64> = Vec::new();
+    let mut set_options: bool = false;
+    let mut time_spent: HashMap<u64, u64> = HashMap::new();
+    let mut q_mark: Vec<String> = Vec::new();
+    let mut slash: Vec<String> = Vec::new();
+    let mut filter: Vec<String> = Vec::new();
+    let mut is_negation: bool = false;
+    let mut keywords: Vec<String> = Vec::new();
+
+    for var in &config.expr {
+        let arg: Vec<String> = var.split("=").map(|s| s.to_string()).collect();
+
+        match arg[0].as_str() {
+            "t" | "trace" => {
+                let mut tiles: Vec<String> =
+                    arg[1].as_str().split(",").map(|s| s.to_string()).collect();
+                let first_tile: Vec<char> = tiles[0].chars().collect();
+
+                is_negation = first_tile[0] == '!';
+                if is_negation {
+                    let letters: Vec<char> = tiles[0].chars().collect();
+                    tiles[0] = letters[1..].iter().cloned().collect::<String>();
+                }
+
+                for tile in tiles {
+                    let letter: Vec<char> = tile.chars().collect();
+                    match letter[0] {
+                        '?' => q_mark.push(letter[1..].iter().cloned().collect::<String>()),
+                        '/' => slash.push(letter[1..].iter().cloned().collect::<String>()),
+                        '%' => keywords.push(letter[1..].iter().cloned().collect::<String>()),
+                        _ => filter.push(letter.iter().cloned().collect::<String>()),
+                    }
+                }
+            }
+            _ => panic!("This command is not supported. Please have a look at the syntax."),
+        }
+    }
+
+    let mut regex_matches: Vec<String> = Vec::new();
+
+    for i in 0..334 {
+        let mut is_match: bool = false;
+        let current_syscall = system_call_names::SYSTEM_CALLS[i as usize].0;
+
+        for pattern in &slash {
+            let re = Regex::new(pattern.as_str()).unwrap();
+            if re.is_match(current_syscall) {
+                is_match = true;
+            }
+        }
+
+        if is_match {
+            regex_matches.push(String::from(current_syscall));
+        }
+    }
+
+    let mut concat_vec: Vec<String> = [&regex_matches[..], &filter[..]].concat();
+
+    concat_vec = parse_expr(concat_vec, keywords);
 
     loop {
         let mut file: Option<std::fs::File> = None;
