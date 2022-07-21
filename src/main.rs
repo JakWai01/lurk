@@ -28,7 +28,8 @@ use users;
 fn main() {
     let matches = app::build_app().get_matches_from(env::args_os());
     let config = construct_config(matches).unwrap();
-
+    
+    // Check whether to attach to an existing process or create a new one
     if config.attach != 0 {
         let pid: pid_t = config.attach;
 
@@ -69,9 +70,11 @@ fn run_tracer(child: Pid, config: Config) {
     let mut expr_filter_categories: Vec<String> = Vec::new();
 
     let mut suppress_system_calls: Vec<String> = Vec::new();
-    let mut regex_system_calls: Vec<String> = Vec::new();
     let mut filter_system_calls: Vec<String> = Vec::new();
+    
+    let mut regex_system_call_patterns: Vec<String> = Vec::new();
 
+    // Sort system calls listed with --expr into their category to handle them accordingly
     for token in &config.expr {
         let arg: Vec<String> = token.split("=").map(|s| s.to_string()).collect();
 
@@ -92,7 +95,7 @@ fn run_tracer(child: Pid, config: Config) {
                     let chars: Vec<char> = token_chars.chars().collect();
                     match chars[0] {
                         '?' => suppress_system_calls.push(chars[1..].iter().cloned().collect::<String>()),
-                        '/' => regex_system_calls.push(chars[1..].iter().cloned().collect::<String>()),
+                        '/' => regex_system_call_patterns.push(chars[1..].iter().cloned().collect::<String>()),
                         '%' => expr_filter_categories.push(chars[1..].iter().cloned().collect::<String>()),
                         _ => filter_system_calls.push(chars.iter().cloned().collect::<String>()),
                     }
@@ -102,13 +105,15 @@ fn run_tracer(child: Pid, config: Config) {
         }
     }
 
-    let mut regex_system_call_matches: Vec<String> = Vec::new();
-
+    let mut regex_system_calls: Vec<String> = Vec::new();
+    
+    // Check if system calls match to any regex_system_call_patterns pattern. If there is a match,
+    // add the system call to regex_system_calls
     for i in 0..334 {
         let mut is_match: bool = false;
         let current_syscall = system_call_names::SYSTEM_CALLS[i as usize].0;
 
-        for pattern in &regex_system_calls {
+        for pattern in &regex_system_call_patterns {
             let re = Regex::new(pattern.as_str()).unwrap();
             if re.is_match(current_syscall) {
                 is_match = true;
@@ -116,17 +121,19 @@ fn run_tracer(child: Pid, config: Config) {
         }
 
         if is_match {
-            regex_system_call_matches.push(String::from(current_syscall));
+            regex_system_calls.push(String::from(current_syscall));
         }
     }
 
-    let mut system_calls: Vec<String> = [&regex_system_call_matches[..], &filter_system_calls[..]].concat();
+    let mut system_calls: Vec<String> = [&regex_system_calls[..], &filter_system_calls[..]].concat();
     
-    system_calls = parse_expr(system_calls, expr_filter_categories);
-
+    system_calls = apply_filter_categories(system_calls, expr_filter_categories);
+    
     loop {
         let mut file: Option<std::fs::File> = None;
-
+        
+        // If the given path is not empty, check if the file exists. If --file is set, write the
+        // output to the file.
         if !config.file.is_empty() {
             if !std::path::Path::new(&config.file).exists() {
                 file = Some(std::fs::File::create(&config.file).expect("create failed!"));
@@ -139,9 +146,11 @@ fn run_tracer(child: Pid, config: Config) {
                 );
             }
         }
-
+        
+        // Wait for the next system call
         wait().unwrap();
-
+        
+        // If --follow-forks is set, set options to follow forks
         if !set_follow_fork_option {
             if config.follow_forks {
                 ptrace::setoptions(
@@ -156,23 +165,26 @@ fn run_tracer(child: Pid, config: Config) {
         }
 
         let reg;
-
+        
+        // Read registers
         match ptrace::getregs(child) {
             Ok(x) => {
                 if x.orig_rax < 336 {
                     reg = x.rsi;
 
-                    let syscall_tuple = system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize];
+                    let system_call_tuple = system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize];
 
                     let argument_type_array: [system_call_names::SystemCallArgumentType; 6] = [
-                        syscall_tuple.1,
-                        syscall_tuple.2,
-                        syscall_tuple.3,
-                        syscall_tuple.4,
-                        syscall_tuple.5,
-                        syscall_tuple.6,
+                        system_call_tuple.1,
+                        system_call_tuple.2,
+                        system_call_tuple.3,
+                        system_call_tuple.4,
+                        system_call_tuple.5,
+                        system_call_tuple.6,
                     ];
-
+                    
+                    // If --syscall-number is set, display the number of the system call at the
+                    // start of the output
                     let mut output = if config.syscall_number {
                         if !config.file.is_empty() {
                             format!(
@@ -210,7 +222,8 @@ fn run_tracer(child: Pid, config: Config) {
                     };
 
                     let mut first_comma = true;
-
+                    
+                    // Handle system call arguments
                     for (i, arg) in argument_type_array.iter().enumerate() {
                         let value = match i {
                             0 => x.rdi,
@@ -221,7 +234,7 @@ fn run_tracer(child: Pid, config: Config) {
                             5 => x.r9,
                             _ => panic!("Invalid system call definition!"),
                         };
-
+                        
                         match arg {
                             system_call_names::SystemCallArgumentType::None => continue,
                             system_call_names::SystemCallArgumentType::Integer
@@ -234,7 +247,8 @@ fn run_tracer(child: Pid, config: Config) {
                                 }
                             }
                         }
-
+    
+                        // Handle type of system call argument accordingly
                         match arg {
                             system_call_names::SystemCallArgumentType::Integer => {
                                 output.push_str(format!("{:?}", value).as_str());
@@ -267,11 +281,14 @@ fn run_tracer(child: Pid, config: Config) {
                     }
 
                     output.push_str(")");
-
+                    
+                    // Only print output at second invocation of ptrace (ptrace gets invoked twice
+                    // per system call. Once before and once after execution).
                     if second_ptrace_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
                         let end = SystemTime::now();
                         let mut elapsed: u128 = 0;
-
+                        
+                        // Measure system call execution time
                         if let Some(i) = system_call_timer_start {
                             elapsed = end.duration_since(i).unwrap_or_default().as_millis();
                             let syscall = x.orig_rax as u64;
@@ -284,6 +301,9 @@ fn run_tracer(child: Pid, config: Config) {
                             }
                         };
                         
+                        // Print output for the current system call if the filter expression did
+                        // not sort it out beforehand. Furthermore, check if the filter expression
+                        // was negated.
                         if system_calls.contains(&String::from(
                             system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0,
                         )) && !expr_negation
@@ -291,7 +311,10 @@ fn run_tracer(child: Pid, config: Config) {
                                 system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0,
                             )) && expr_negation
                             || system_calls.len() == 0
-                        {
+                        {   
+                            // Handle return value. The return value is distinguished into
+                            // different categories (successful, failed, address) and handled
+                            // accordingly
                             if (x.rax as i32).abs() > 32768 {
                                 if !config.file.is_empty() {
                                     if let Some(mut fd) = file {
@@ -419,7 +442,7 @@ fn run_tracer(child: Pid, config: Config) {
             Err(_) => break,
         }
     }
-
+    
     if config.summary_only || config.summary {
         let mut total_elapsed_time = 0;
         for value in system_call_timer_stop.values() {
@@ -435,7 +458,8 @@ fn run_tracer(child: Pid, config: Config) {
 
         let error_map = count_element_function(failed_system_calls);
         let mut number_of_failed_system_calls = 0;
-
+        
+        // Construct summary columns
         for (key, value) in &syscall_sorted {
             println!(
                 "{:>6} {:>11} {:>11} {:>9} {:>9} {}",
@@ -499,7 +523,8 @@ fn run_tracee(config: Config) {
 
     ptrace::traceme().unwrap();
     personality(linux_personality::ADDR_NO_RANDOMIZE).unwrap();
-
+    
+    // Handle arguments passed to the program to be traced
     for (index, arg) in config.command.iter().enumerate() {
         if index != 0 {
             args.push(String::from(arg));
@@ -510,7 +535,8 @@ fn run_tracee(config: Config) {
 
     let mut cmd = Command::new(program);
     cmd.args(args).stdout(Stdio::null());
-
+    
+    // Add and remove environment variables to/from the environment
     for token in config.env {
         let arg: Vec<String> = token.split("=").map(|s| s.to_string()).collect();
 
@@ -657,7 +683,8 @@ where
     result
 }
 
-fn parse_expr(mut system_calls: Vec<String>, expr_filter_categories: Vec<String>) -> Vec<String> {
+/// Add all system_calls from the given categories to the system_calls Vector
+fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories: Vec<String>) -> Vec<String> {
     for keyword in expr_filter_categories {
         match keyword.as_str() {
             "file" => {
