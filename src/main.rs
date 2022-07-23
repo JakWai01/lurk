@@ -188,14 +188,14 @@ fn run_tracer(child: Pid, config: Config) {
                     let mut output = if config.syscall_number {
                         if !config.file.is_empty() {
                             format!(
-                                "[{}] {:>3}:x {}(",
+                                "[{}] {:>3} {}(",
                                 child.as_raw().to_string(),
                                 x.orig_rax,
                                 system_call_names::SYSTEM_CALLS[x.orig_rax as usize].0
                             )
                         } else {
                             format!(
-                                "[{}] {:>3}:x {}(",
+                                "[{}] {:>3} {}(",
                                 Blue.bold().paint(child.as_raw().to_string()),
                                 x.orig_rax,
                                 Style::new().bold().paint(
