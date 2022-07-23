@@ -15,8 +15,9 @@ jobs:
           args: --release
       - name: Rename binary
         run: mv target/release/lurk lurk-linux-amd64
-      - uses: taiki-e/upload-rust-binary-action@v1
-      with:
-        bin: lurk-linux-amd64
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload to release
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: lurk-linux-amd64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
