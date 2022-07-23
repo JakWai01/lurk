@@ -6,18 +6,17 @@ on:
 jobs:
   build_for_linux:
     name: Linux
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@main
+      - uses: actions/checkout@v3
       - uses: actions-rs/cargo@v1
         with:
           command: build
           args: --release
       - name: Rename binary
         run: mv target/release/lurk lurk-linux-amd64
-      - name: Upload to release
-        uses: JasonEtco/upload-to-release@master
-        with:
-          args: lurk-linux-amd64 application/octet-stream
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: taiki-e/upload-rust-binary-action@v1
+      with:
+        bin: lurk-linux-amd64
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
