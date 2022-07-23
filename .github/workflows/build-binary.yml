@@ -16,7 +16,7 @@ jobs:
       - name: Rename binary
         run: mv target/release/lurk lurk-linux-amd64
       - name: Upload to release
-        uses: JasonEtco/upload-to-release@d648f1babf776de9cad881320bd9e9818fc3b262
+        uses: JasonEtco/upload-to-release@master
         with:
           args: lurk-linux-amd64 application/octet-stream
         env:
