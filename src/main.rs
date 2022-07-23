@@ -398,7 +398,7 @@ fn run_tracer(child: Pid, config: Config) {
                                             }
                                         }
                                     }
-                                    if (x.rax as i32) > 0 {
+                                    if (x.rax as i32) >= 0 {
                                         if !config.failed_only && !config.summary_only {
                                             if config.syscall_times {
                                                 println!(
