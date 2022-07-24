@@ -2,7 +2,7 @@
 
 [![CICD](https://github.com/JakWai01/lurk/actions/workflows/CICD.yml/badge.svg)](https://github.com/JakWai01/lurk/actions/workflows/CICD.yml)
 
-A simple and pretty alternative to strace
+`lurk` is a simple and pretty alternative to `strace`. In contrast to `strace`, `lurk` focuses on a simple, yet pretty, user experience while implementing the most important use cases of `strace`.
 
 ## Demo
 
@@ -280,7 +280,7 @@ $ lurk --expr trace=?prctl ls
 [55407] mmap(NULL, 92599, 1, 2, 3, 0) = 0xf7fa9000
 ```
 
-#### Only output `openat`, `close` and `mmap` system call
+#### Only output `openat`, `close` and `mmap` system calls
 
 ```
 $ lurk --expr trace=openat,close,mmap ls
