@@ -256,7 +256,7 @@ $ lurk --expr trace=\!/o ls
 #### Filtering only for all system calls taking a file as an argument
 
 ```
-$ lurk --expr trace=%file
+$ lurk --expr trace=%file ls
 [55121] access("", 4) = -2
 [55121] openat(4294967196, "/etc/ld.so.cache", 524288) = 3
 [55121] newfstatat(3, "", 0xffffd9a0, 4096) = 0
@@ -265,6 +265,32 @@ $ lurk --expr trace=%file
 [55121] openat(4294967196, "/usr/lib/libc.so.6", 524288) = 3
 [55121] newfstatat(3, "", 0xffffd980, 4096) = 0
 ...
+```
+
+#### Suppress error for `prctl` system call
+
+```
+$ lurk --expr trace=?prctl ls
+[55407] execve("", "", "") = 0
+[55407] brk(NULL) = 0x55578000
+[55407] arch_prctl(12289, 0xffffe780) = -22
+[55407] access("", 4) = -2
+[55407] openat(4294967196, "/etc/ld.so.cache", 524288) = 3
+[55407] newfstatat(3, "", 0xffffd9a0, 4096) = 0
+[55407] mmap(NULL, 92599, 1, 2, 3, 0) = 0xf7fa9000
+```
+
+#### Only output `openat`, `close` and `mmap` system call
+
+```
+$ lurk --expr trace=openat,close,mmap ls
+[55440] openat(4294967196, "/etc/ld.so.cache", 524288) = 3
+[55440] mmap(NULL, 92599, 1, 2, 3, 0) = 0xf7fa9000
+[55440] close(3) = 0
+[55440] openat(4294967196, "/usr/lib/libcap.so.2", 524288) = 3
+[55440] mmap(NULL, 8192, 3, 34, 4294967295, 0) = 0xf7fa7000
+[55440] mmap(NULL, 45128, 1, 2050, 3, 0) = 0xf7f9b000
+[55440] mmap(0xf7f9e000, 20480, 5, 2066, 3, 12288) = 0xf7f9e000
 ```
 
 ## License
