@@ -2,6 +2,10 @@
 
 A simple alternative to strace written in Rust.
 
+## Demo
+
+![Demo](assets/screencast.svg)
+
 ## Overview
 
 TODO
