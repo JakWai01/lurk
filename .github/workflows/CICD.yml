@@ -1,4 +1,4 @@
-name: Build Binaries
+name: CICD
 on: 
   release:
     types:
