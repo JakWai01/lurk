@@ -1,4 +1,6 @@
-![Lurk logo](./assets/logo.png)
+# lurk
+
+[![CICD](https://github.com/JakWai01/lurk/actions/workflows/CICD.yml/badge.svg)](https://github.com/JakWai01/lurk/actions/workflows/CICD.yml)
 
 A simple alternative to strace written in Rust.
 
