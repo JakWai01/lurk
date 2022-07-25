@@ -117,7 +117,7 @@ $ sudo lurk --attach $PID
 
 ### Filtering with `--expr`
 
-Unlike in `strace`, `lurk` only supports `--expr trace`. Since this flag behaves almost exactly like in `strace`, here a short, slightly changed, excerpt of the `strace` manpage on how to use `lurk --expr trace`: 
+Unlike in `strace`, `lurk` only supports `--expr trace`. Since this flag behaves almost exactly like in `strace`, here a short, slightly changed, excerpt of the `strace` [manpage](https://man7.org/linux/man-pages/man1/strace.1.html) on how to use `lurk --expr trace`: 
 
 ```
  -e trace=syscall_set
@@ -292,6 +292,11 @@ $ lurk --expr trace=openat,close,mmap ls
 [55440] mmap(NULL, 45128, 1, 2050, 3, 0) = 0xf7f9b000
 [55440] mmap(0xf7f9e000, 20480, 5, 2066, 3, 12288) = 0xf7f9e000
 ```
+
+## Acknowledgements
+
+- [sharkdp/fd](https://man7.org/linux/man-pages/man1/strace.1.html) as an inspiration on how to structure a Rust CLI and its README.
+- All maintainers of the dependencies used to create lurk and all of those who answered my questions regarding `ptrace`.
 
 ## License
 
