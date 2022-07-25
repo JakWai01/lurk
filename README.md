@@ -295,7 +295,7 @@ $ lurk --expr trace=openat,close,mmap ls
 
 ## Acknowledgements
 
-- [sharkdp/fd](https://man7.org/linux/man-pages/man1/strace.1.html) as an inspiration on how to structure a Rust CLI and its README.
+- [sharkdp/fd](https://github.com/sharkdp/fd) as an inspiration on how to structure a Rust CLI and its README.
 - All maintainers of the dependencies used to create lurk and all of those who answered my questions regarding `ptrace`.
 
 ## License
