@@ -2,7 +2,10 @@
 
 [![CICD](https://github.com/JakWai01/lurk/actions/workflows/CICD.yml/badge.svg)](https://github.com/JakWai01/lurk/actions/workflows/CICD.yml)
 
-`lurk` is a simple and pretty alternative to `strace`. It allows the user to trace system calls of a process or of a command. In contrast to `strace`, `lurk` focuses on a simple, yet pretty, user experience while implementing the most important use cases of `strace`.
+`lurk` is a simple and pretty alternative to `strace`. It allows the user to
+trace system calls of a process or of a command. In contrast to `strace`,
+`lurk` focuses on a simple, yet pretty, user experience while implementing the
+most important use cases of `strace`.
 
 ## Demo
 
@@ -15,15 +18,15 @@
 
 ## Installation
 
-```
-$ curl -L -o /tmp/lurk.tar.gz "https://github.com/JakWai01/lurk/releases/latest/download/lurk-x86_64-unknown-linux-gnu.tar.gz"
-$ tar -xzf /tmp/lurk.tar.gz
-$ sudo install /tmp/lurk /usr/local/bin
+```sh
+curl -L -o /tmp/lurk.tar.gz "https://github.com/JakWai01/lurk/releases/latest/download/lurk-x86_64-unknown-linux-gnu.tar.gz"
+tar -xzf /tmp/lurk.tar.gz
+sudo install /tmp/lurk /usr/local/bin
 ```
 
 ## Usage
 
-To get a quick overview, you can run `lurk --help`: 
+To get a quick overview, you can run `lurk --help`:
 
 ```
 lurk 0.0.7
@@ -86,7 +89,10 @@ OPTIONS:
 
 ### Basic trace
 
-Basically, there are two ways of tracing system calls. You can either execute a command directly or attach to a running process by providing the process ID (PID) via `--attach`. In the latter case, the command has to be run with escalated priviledges (`sudo`).
+Basically, there are two ways of tracing system calls. You can either execute a
+command directly or attach to a running process by providing the process ID
+(PID) via `--attach`. In the latter case, the command has to be run with
+escalated privileges (`sudo`).
 
 #### Executing a command
 
@@ -117,7 +123,11 @@ $ sudo lurk --attach $PID
 
 ### Filtering with `--expr`
 
-Unlike in `strace`, `lurk` only supports `--expr trace`. Since this flag behaves almost exactly like in `strace`, here a short, slightly changed, excerpt of the `strace` [manpage](https://man7.org/linux/man-pages/man1/strace.1.html) on how to use `lurk --expr trace`: 
+Unlike in `strace`, `lurk` only supports `--expr trace`. Since this flag
+behaves almost exactly like in `strace`, here a short, slightly changed,
+excerpt of the `strace`
+[manpage](https://man7.org/linux/man-pages/man1/strace.1.html) on how to use
+`lurk --expr trace`:
 
 ```
  -e trace=syscall_set
@@ -237,7 +247,8 @@ Unlike in `strace`, `lurk` only supports `--expr trace`. Since this flag behaves
 
 ```
 
-**Note**: When negating a statement with `!`, make sure to escape it (`\!`) when using bash.
+**Note**: When negating a statement with `!`, make sure to escape it (`\!`)
+when using bash.
 
 #### Filtering for system calls not containing the letter `o`
 
@@ -295,8 +306,10 @@ $ lurk --expr trace=openat,close,mmap ls
 
 ## Acknowledgements
 
-- [sharkdp/fd](https://github.com/sharkdp/fd) as an inspiration on how to structure a Rust CLI and its README.
-- All maintainers of the dependencies used to create lurk and all of those who answered my questions regarding `ptrace`.
+- [sharkdp/fd](https://github.com/sharkdp/fd) as an inspiration on how to
+  structure a Rust CLI and its README.
+- All maintainers of the dependencies used to create lurk and all of those who
+  answered my questions regarding `ptrace`.
 
 ## License
 
