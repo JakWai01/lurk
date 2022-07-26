@@ -2,7 +2,7 @@
 
 [![CICD](https://github.com/JakWai01/lurk/actions/workflows/CICD.yml/badge.svg)](https://github.com/JakWai01/lurk/actions/workflows/CICD.yml)
 
-`lurk` is a simple and pretty alternative to `strace`. In contrast to `strace`, `lurk` focuses on a simple, yet pretty, user experience while implementing the most important use cases of `strace`.
+`lurk` is a simple and pretty alternative to `strace`. It allows the user to trace system calls of a process or of a command. In contrast to `strace`, `lurk` focuses on a simple, yet pretty, user experience while implementing the most important use cases of `strace`.
 
 ## Demo
 
