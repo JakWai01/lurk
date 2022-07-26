@@ -18,11 +18,18 @@ most important use cases of `strace`.
 
 ## Installation
 
+### cURL
 ```sh
 curl -L -o /tmp/lurk.tar.gz "https://github.com/JakWai01/lurk/releases/latest/download/lurk-x86_64-unknown-linux-gnu.tar.gz"
 tar -xzf /tmp/lurk.tar.gz
 sudo install /tmp/lurk /usr/local/bin
 ```
+
+### Cargo
+```sh
+cargo install lurk-cli
+```
+**Note**: Since the crate name `lurk` was already gone, `lurk` is called `lurk-cli` when installing via `cargo`.
 
 ## Usage
 
