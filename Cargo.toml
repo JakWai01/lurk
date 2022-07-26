@@ -1,9 +1,10 @@
 [package]
 name = "lurk"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 authors = ["Jakob Waibel <mail@jakobwaibel.com>"]
 description = "lurk is a pretty (simple) alternative to strace."
+license = "AGPL-3.0"
 
 [dependencies]
 ansi_term = "0.12"
