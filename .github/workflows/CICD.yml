@@ -16,7 +16,7 @@ jobs:
       - name: Upload to release
         uses: taiki-e/upload-rust-binary-action@v1
         with:
-          bin: lurk-cli
+          bin: lurk
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
   publish:
