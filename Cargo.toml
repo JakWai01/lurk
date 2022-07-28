@@ -6,6 +6,10 @@ authors = ["Jakob Waibel <mail@jakobwaibel.com>"]
 description = "lurk is a pretty (simple) alternative to strace."
 license = "AGPL-3.0"
 
+[[bin]]
+name = "lurk"
+path = "src/main.rs"
+
 [dependencies]
 ansi_term = "0.12"
 clap = { version = "3.1.18", features = ["derive"] }
