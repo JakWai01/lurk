@@ -38,6 +38,8 @@ main() {
 
     enter "lurk --expr trace=%file ls"
 
+    enter "lurk --json ls | jq"
+
     enter "lurk --summary-only ls"
 
     prompt

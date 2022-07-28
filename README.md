@@ -14,6 +14,7 @@ most important use cases of `strace`.
 ## Features
 
 - Supports an opinionated subset of strace flags.
+- Supports JSON output compatible for further processing via e.g. `jq`
 - Uses colorized, formatted output ;-).
 
 ## Installation
@@ -29,14 +30,13 @@ sudo install /tmp/lurk /usr/local/bin
 ```sh
 cargo install lurk-cli
 ```
-**Note**: Since the crate name `lurk` was already gone, `lurk` is called `lurk-cli` when installing via `cargo`.
 
 ## Usage
 
 To get a quick overview, you can run `lurk --help`:
 
 ```
-lurk 0.0.7
+lurk 0.2.7
 
 USAGE:
     lurk [OPTIONS] [command]...
@@ -62,6 +62,9 @@ OPTIONS:
 
     -h, --help
             Print help information
+
+    -j, --json
+            Display output in JSON format
 
     -n, --syscall-number
             Display system call numbers
