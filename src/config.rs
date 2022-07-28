@@ -43,4 +43,7 @@ pub struct Config {
 
     // A qualifying expression to modify the output
     pub expr: Vec<String>,
+
+    // Display output in JSON format
+    pub json: bool,
 }

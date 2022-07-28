@@ -102,6 +102,12 @@ pub fn build_app() -> Command<'static> {
             .short('e')
             .multiple_occurrences(true)
             .takes_value(true)
+        )
+        .arg(
+            Arg::new("json")
+            .help("Display output in JSON format")
+            .long("json")
+            .short('j')
         );
     app
 }

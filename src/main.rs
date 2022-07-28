@@ -16,6 +16,7 @@ use nix::sys::ptrace::*;
 use nix::sys::wait::wait;
 use nix::unistd::{fork, ForkResult, Pid};
 use regex::Regex;
+use serde_json::json;
 use std::collections::HashMap;
 use std::env;
 use std::fs::OpenOptions;
@@ -28,7 +29,6 @@ use users;
 fn main() {
     let matches = app::build_app().get_matches_from(env::args_os());
     let config = construct_config(matches).unwrap();
-    
     // Check whether to attach to an existing process or create a new one
     if config.attach != 0 {
         let pid: pid_t = config.attach;
@@ -58,7 +58,6 @@ fn main() {
 fn run_tracer(child: Pid, config: Config) {
     let mut system_call_timer_start: Option<std::time::SystemTime> = None;
     let mut system_call_timer_stop: HashMap<u64, u64> = HashMap::new();
-    
     let mut second_ptrace_invocation = true;
 
     let mut successful_system_calls: Vec<u64> = Vec::new();
@@ -71,7 +70,6 @@ fn run_tracer(child: Pid, config: Config) {
 
     let mut suppress_system_calls: Vec<String> = Vec::new();
     let mut filter_system_calls: Vec<String> = Vec::new();
-    
     let mut regex_system_call_patterns: Vec<String> = Vec::new();
 
     // Sort system calls listed with --expr into their category to handle them accordingly
@@ -94,9 +92,12 @@ fn run_tracer(child: Pid, config: Config) {
                 for token_chars in argument_token {
                     let chars: Vec<char> = token_chars.chars().collect();
                     match chars[0] {
-                        '?' => suppress_system_calls.push(chars[1..].iter().cloned().collect::<String>()),
-                        '/' => regex_system_call_patterns.push(chars[1..].iter().cloned().collect::<String>()),
-                        '%' => expr_filter_categories.push(chars[1..].iter().cloned().collect::<String>()),
+                        '?' => suppress_system_calls
+                            .push(chars[1..].iter().cloned().collect::<String>()),
+                        '/' => regex_system_call_patterns
+                            .push(chars[1..].iter().cloned().collect::<String>()),
+                        '%' => expr_filter_categories
+                            .push(chars[1..].iter().cloned().collect::<String>()),
                         _ => filter_system_calls.push(chars.iter().cloned().collect::<String>()),
                     }
                 }
@@ -106,7 +107,6 @@ fn run_tracer(child: Pid, config: Config) {
     }
 
     let mut regex_system_calls: Vec<String> = Vec::new();
-    
     // Check if system calls match to any regex_system_call_patterns pattern. If there is a match,
     // add the system call to regex_system_calls
     for i in 0..334 {
@@ -125,13 +125,11 @@ fn run_tracer(child: Pid, config: Config) {
         }
     }
 
-    let mut system_calls: Vec<String> = [&regex_system_calls[..], &filter_system_calls[..]].concat();
-    
+    let mut system_calls: Vec<String> =
+        [&regex_system_calls[..], &filter_system_calls[..]].concat();
     system_calls = apply_filter_categories(system_calls, expr_filter_categories);
-    
     loop {
         let mut file: Option<std::fs::File> = None;
-        
         // If the given path is not empty, check if the file exists. If --file is set, write the
         // output to the file.
         if !config.file.is_empty() {
@@ -146,10 +144,8 @@ fn run_tracer(child: Pid, config: Config) {
                 );
             }
         }
-        
         // Wait for the next system call
         wait().unwrap();
-        
         // If --follow-forks is set, set options to follow forks
         if !set_follow_fork_option {
             if config.follow_forks {
@@ -165,7 +161,6 @@ fn run_tracer(child: Pid, config: Config) {
         }
 
         let reg;
-        
         // Read registers
         match ptrace::getregs(child) {
             Ok(x) => {
@@ -182,7 +177,8 @@ fn run_tracer(child: Pid, config: Config) {
                         system_call_tuple.5,
                         system_call_tuple.6,
                     ];
-                    
+                    let mut arguments: Vec<String> = Vec::new();
+
                     // If --syscall-number is set, display the number of the system call at the
                     // start of the output
                     let mut output = if config.syscall_number {
@@ -222,7 +218,6 @@ fn run_tracer(child: Pid, config: Config) {
                     };
 
                     let mut first_comma = true;
-                    
                     // Handle system call arguments
                     for (i, arg) in argument_type_array.iter().enumerate() {
                         let value = match i {
@@ -234,7 +229,6 @@ fn run_tracer(child: Pid, config: Config) {
                             5 => x.r9,
                             _ => panic!("Invalid system call definition!"),
                         };
-                        
                         match arg {
                             system_call_names::SystemCallArgumentType::None => continue,
                             system_call_names::SystemCallArgumentType::Integer
@@ -247,11 +241,11 @@ fn run_tracer(child: Pid, config: Config) {
                                 }
                             }
                         }
-    
                         // Handle type of system call argument accordingly
                         match arg {
                             system_call_names::SystemCallArgumentType::Integer => {
                                 output.push_str(format!("{:?}", value).as_str());
+                                arguments.push(format!("{:?}", value));
                             }
                             system_call_names::SystemCallArgumentType::String => {
                                 let mut string = read_string(child, reg as *mut c_void);
@@ -266,12 +260,15 @@ fn run_tracer(child: Pid, config: Config) {
                                     string = format!("{:?}...", truncated_string);
                                 }
                                 output.push_str(string.as_str());
+                                arguments.push(string);
                             }
                             system_call_names::SystemCallArgumentType::Address => {
                                 if value == 0 {
                                     output.push_str("NULL");
+                                    arguments.push(String::from("NULL"));
                                 } else {
                                     output.push_str(format!("0x{:x}", value as i32).as_str());
+                                    arguments.push(format!("0x{:x}", value as i32));
                                 }
                             }
                             system_call_names::SystemCallArgumentType::None => {
@@ -281,13 +278,11 @@ fn run_tracer(child: Pid, config: Config) {
                     }
 
                     output.push_str(")");
-                    
                     // Only print output at second invocation of ptrace (ptrace gets invoked twice
                     // per system call. Once before and once after execution).
                     if second_ptrace_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
                         let end = SystemTime::now();
                         let mut elapsed: u128 = 0;
-                        
                         // Measure system call execution time
                         if let Some(i) = system_call_timer_start {
                             elapsed = end.duration_since(i).unwrap_or_default().as_millis();
@@ -300,7 +295,6 @@ fn run_tracer(child: Pid, config: Config) {
                                 system_call_timer_stop.insert(syscall, elapsed as u64);
                             }
                         };
-                        
                         // Print output for the current system call if the filter expression did
                         // not sort it out beforehand. Furthermore, check if the filter expression
                         // was negated.
@@ -311,7 +305,13 @@ fn run_tracer(child: Pid, config: Config) {
                                 system_call_names::SYSTEM_CALLS[(x.orig_rax) as usize].0,
                             )) && expr_negation
                             || system_calls.len() == 0
-                        {   
+                        {
+                            let return_value: String = if (x.rax as i32).abs() > 32768 {
+                                format!("0x{:x}", x.rax as i32)
+                            } else {
+                                format!("{}", x.rax as i32)
+                            };
+
                             // Handle return value. The return value is distinguished into
                             // different categories (successful, failed, address) and handled
                             // accordingly
@@ -323,13 +323,32 @@ fn run_tracer(child: Pid, config: Config) {
                                                 &mut fd,
                                                 "{} = 0x{:x} <{:.6}> \n",
                                                 output, x.rax as i32, elapsed
-                                            ).unwrap();
+                                            )
+                                            .unwrap();
                                         } else {
-                                            write!(&mut fd, "{} = 0x{:x}\n", output, x.rax as i32).unwrap();
+                                            write!(&mut fd, "{} = 0x{:x}\n", output, x.rax as i32)
+                                                .unwrap();
+                                        }
+
+                                        if config.json && !config.summary_only && !config.summary {
+                                            if (config.successful_only && (x.rax as i32) >= 0)
+                                                || (config.failed_only && (x.rax as i32) < 0)
+                                                || (!config.failed_only && !config.successful_only)
+                                            {
+                                                let json = json!({
+                                                    "syscall": system_call_names::SYSTEM_CALLS[x.orig_rax as usize].0,
+                                                    "args": arguments,
+                                                    "result": return_value,
+                                                    "pid": child.as_raw().to_string(),
+                                                    "type": "SYSCALL"
+                                                });
+
+                                                write!(&mut fd, "{}", json).unwrap();
+                                            }
                                         }
                                     }
                                 } else {
-                                    if !config.failed_only && !config.summary_only {
+                                    if !config.failed_only && !config.summary_only && !config.json {
                                         if config.syscall_times {
                                             println!(
                                                 "{} = {} <{:.6}>",
@@ -349,6 +368,23 @@ fn run_tracer(child: Pid, config: Config) {
                                             );
                                         }
                                     }
+
+                                    if config.json && !config.summary_only && !config.summary {
+                                        if (config.successful_only && (x.rax as i32) >= 0)
+                                            || (config.failed_only && (x.rax as i32) < 0)
+                                            || (!config.failed_only && !config.successful_only)
+                                        {
+                                            let json = json!({
+                                                "syscall": system_call_names::SYSTEM_CALLS[x.orig_rax as usize].0,
+                                                "args": arguments,
+                                                "result": return_value,
+                                                "pid": child.as_raw().to_string(),
+                                                "type": "SYSCALL"
+                                            });
+
+                                            println!("{}", json);
+                                        }
+                                    }
                                 }
                             } else {
                                 if !config.file.is_empty() {
@@ -358,9 +394,28 @@ fn run_tracer(child: Pid, config: Config) {
                                                 &mut fd,
                                                 "{} = {} <{:.6}>\n",
                                                 output, x.rax as i32, elapsed
-                                            ).unwrap();
+                                            )
+                                            .unwrap();
                                         } else {
-                                            write!(&mut fd, "{} = {}\n", output, x.rax as i32).unwrap();
+                                            write!(&mut fd, "{} = {}\n", output, x.rax as i32)
+                                                .unwrap();
+                                        }
+
+                                        if config.json && !config.summary_only && !config.summary {
+                                            if (config.successful_only && (x.rax as i32) >= 0)
+                                                || (config.failed_only && (x.rax as i32) < 0)
+                                                || (!config.failed_only && !config.successful_only)
+                                            {
+                                                let json = json!({
+                                                    "syscall": system_call_names::SYSTEM_CALLS[x.orig_rax as usize].0,
+                                                    "args": arguments,
+                                                    "result": return_value,
+                                                    "pid": child.as_raw().to_string(),
+                                                    "type": "SYSCALL"
+                                                });
+
+                                                write!(&mut fd, "{}", json).unwrap();
+                                            }
                                         }
                                     }
                                 } else {
@@ -381,7 +436,10 @@ fn run_tracer(child: Pid, config: Config) {
                                     {
                                         failed_system_calls.push(x.orig_rax);
 
-                                        if !config.successful_only && !config.summary_only {
+                                        if !config.successful_only
+                                            && !config.summary_only
+                                            && !config.json
+                                        {
                                             if config.syscall_times {
                                                 println!(
                                                     "{} = {} <{:.6}>",
@@ -399,7 +457,10 @@ fn run_tracer(child: Pid, config: Config) {
                                         }
                                     }
                                     if (x.rax as i32) >= 0 {
-                                        if !config.failed_only && !config.summary_only {
+                                        if !config.failed_only
+                                            && !config.summary_only
+                                            && !config.json
+                                        {
                                             if config.syscall_times {
                                                 println!(
                                                     "{} = {} <{:.6}>",
@@ -414,6 +475,22 @@ fn run_tracer(child: Pid, config: Config) {
                                                     Green.bold().paint((x.rax as i32).to_string())
                                                 );
                                             }
+                                        }
+                                    }
+                                    if config.json && !config.summary_only && !config.summary {
+                                        if (config.successful_only && (x.rax as i32) >= 0)
+                                            || (config.failed_only && (x.rax as i32) < 0)
+                                            || (!config.failed_only && !config.successful_only)
+                                        {
+                                            let json = json!({
+                                                "syscall": system_call_names::SYSTEM_CALLS[x.orig_rax as usize].0,
+                                                "args": arguments,
+                                                "result": return_value,
+                                                "pid": child.as_raw().to_string(),
+                                                "type": "SYSCALL"
+                                            });
+
+                                            println!("{}", json);
                                         }
                                     }
                                 }
@@ -442,8 +519,7 @@ fn run_tracer(child: Pid, config: Config) {
             Err(_) => break,
         }
     }
-    
-    if config.summary_only || config.summary {
+    if !config.json && (config.summary_only || config.summary) {
         let mut total_elapsed_time = 0;
         for value in system_call_timer_stop.values() {
             total_elapsed_time += value;
@@ -458,7 +534,6 @@ fn run_tracer(child: Pid, config: Config) {
 
         let error_map = count_element_function(failed_system_calls);
         let mut number_of_failed_system_calls = 0;
-        
         // Construct summary columns
         for (key, value) in &syscall_sorted {
             println!(
@@ -466,7 +541,10 @@ fn run_tracer(child: Pid, config: Config) {
                 {
                     if let Some(i) = system_call_timer_stop.get(key) {
                         if total_elapsed_time != 0 {
-                            format!("{:.2}", *i as f32 / (total_elapsed_time as f32 / 100 as f32) as f32)
+                            format!(
+                                "{:.2}",
+                                *i as f32 / (total_elapsed_time as f32 / 100 as f32) as f32
+                            )
                         } else {
                             format!("0.00")
                         }
@@ -503,7 +581,7 @@ fn run_tracer(child: Pid, config: Config) {
                 system_call_names::SYSTEM_CALLS[***key as usize].0
             );
         }
-        
+
         let number_of_successful_system_calls = successful_system_calls.len();
 
         println!("------ ----------- ----------- --------- --------- ----------------");
@@ -513,7 +591,7 @@ fn run_tracer(child: Pid, config: Config) {
             (total_elapsed_time as f32 / number_of_successful_system_calls as f32) * 1000 as f32,
             total_elapsed_time,
             number_of_failed_system_calls
-        )
+        );
     }
 }
 
@@ -523,7 +601,6 @@ fn run_tracee(config: Config) {
 
     ptrace::traceme().unwrap();
     personality(linux_personality::ADDR_NO_RANDOMIZE).unwrap();
-    
     // Handle arguments passed to the program to be traced
     for (index, arg) in config.command.iter().enumerate() {
         if index != 0 {
@@ -535,7 +612,6 @@ fn run_tracee(config: Config) {
 
     let mut cmd = Command::new(program);
     cmd.args(args).stdout(Stdio::null());
-    
     // Add and remove environment variables to/from the environment
     for token in config.env {
         let arg: Vec<String> = token.split("=").map(|s| s.to_string()).collect();
@@ -558,7 +634,6 @@ fn run_tracee(config: Config) {
 
 fn read_string(pid: Pid, address: AddressType) -> String {
     let mut string = String::new();
-    
     // Move 8 bytes up each time for next read.
     let mut count = 0;
     let word_size = 8;
@@ -650,6 +725,8 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
 
     let syscall_times = matches.is_present("syscall-times");
 
+    let json = matches.is_present("json");
+
     Ok(Config {
         syscall_number,
         attach,
@@ -666,6 +743,7 @@ fn construct_config(matches: clap::ArgMatches) -> Result<Config> {
         follow_forks,
         syscall_times,
         expr,
+        json,
     })
 }
 
@@ -684,7 +762,10 @@ where
 }
 
 /// Add all system_calls from the given categories to the system_calls Vector
-fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories: Vec<String>) -> Vec<String> {
+fn apply_filter_categories(
+    mut system_calls: Vec<String>,
+    expr_filter_categories: Vec<String>,
+) -> Vec<String> {
     for keyword in expr_filter_categories {
         match keyword.as_str() {
             "file" => {
@@ -706,7 +787,7 @@ fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories
                         .collect::<Vec<String>>()[..],
                 ]
                 .concat();
-            },
+            }
             "network" | "net" => {
                 system_calls = [
                     &system_calls[..],
@@ -716,7 +797,7 @@ fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories
                         .collect::<Vec<String>>()[..],
                 ]
                 .concat();
-            },
+            }
             "signal" => {
                 system_calls = [
                     &system_calls[..],
@@ -726,7 +807,7 @@ fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories
                         .collect::<Vec<String>>()[..],
                 ]
                 .concat();
-            },
+            }
             "ipc" => {
                 system_calls = [
                     &system_calls[..],
@@ -736,7 +817,7 @@ fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories
                         .collect::<Vec<String>>()[..],
                 ]
                 .concat();
-            },
+            }
             "desc" => {
                 system_calls = [
                     &system_calls[..],
@@ -746,7 +827,7 @@ fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories
                         .collect::<Vec<String>>()[..],
                 ]
                 .concat();
-            },
+            }
             "memory" => {
                 system_calls = [
                     &system_calls[..],
@@ -756,7 +837,7 @@ fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories
                         .collect::<Vec<String>>()[..],
                 ]
                 .concat();
-            },
+            }
             "creds" => {
                 system_calls = [
                     &system_calls[..],
@@ -766,7 +847,7 @@ fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories
                         .collect::<Vec<String>>()[..],
                 ]
                 .concat();
-            },
+            }
             "stat" => {
                 system_calls = [
                     &system_calls[..],
@@ -776,7 +857,7 @@ fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories
                         .collect::<Vec<String>>()[..],
                 ]
                 .concat();
-            },
+            }
             "lstat" => {
                 system_calls = [
                     &system_calls[..],
@@ -786,7 +867,7 @@ fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories
                         .collect::<Vec<String>>()[..],
                 ]
                 .concat();
-            },
+            }
             "fstat" => {
                 system_calls = [
                     &system_calls[..],
@@ -796,7 +877,7 @@ fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories
                         .collect::<Vec<String>>()[..],
                 ]
                 .concat();
-            },
+            }
             "%stat" => {
                 system_calls = [
                     &system_calls[..],
@@ -806,7 +887,7 @@ fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories
                         .collect::<Vec<String>>()[..],
                 ]
                 .concat();
-            },
+            }
             "statfs" => {
                 system_calls = [
                     &system_calls[..],
@@ -816,7 +897,7 @@ fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories
                         .collect::<Vec<String>>()[..],
                 ]
                 .concat();
-            },
+            }
             "fstatfs" => {
                 system_calls = [
                     &system_calls[..],
@@ -826,7 +907,7 @@ fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories
                         .collect::<Vec<String>>()[..],
                 ]
                 .concat();
-            },
+            }
             "%statfs" => {
                 system_calls = [
                     &system_calls[..],
@@ -836,7 +917,7 @@ fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories
                         .collect::<Vec<String>>()[..],
                 ]
                 .concat();
-            },
+            }
             "clock" => {
                 system_calls = [
                     &system_calls[..],
@@ -846,7 +927,7 @@ fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories
                         .collect::<Vec<String>>()[..],
                 ]
                 .concat();
-            },
+            }
             "pure" => {
                 system_calls = [
                     &system_calls[..],
@@ -856,7 +937,7 @@ fn apply_filter_categories(mut system_calls: Vec<String>, expr_filter_categories
                         .collect::<Vec<String>>()[..],
                 ]
                 .concat();
-            },
+            }
             _ => panic!("This is not a valid option!"),
         }
     }
