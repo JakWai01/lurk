@@ -14,7 +14,7 @@ most important use cases of `strace`.
 ## Features
 
 - Supports an opinionated subset of strace flags.
-- Supports JSON output compatible for further processing via e.g. `jq`
+- Supports JSON output for further processing via e.g. `jq`
 - Uses colorized, formatted output ;-).
 
 ## Installation
