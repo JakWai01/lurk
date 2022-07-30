@@ -182,7 +182,7 @@ dependencies = [
 
 [[package]]
 name = "lurk-cli"
-version = "0.2.8"
+version = "0.2.9"
 dependencies = [
  "ansi_term",
  "anyhow",
