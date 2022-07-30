@@ -2,7 +2,7 @@ use clap::{Arg, Command};
 
 pub fn build_app() -> Command<'static> {
     let app = Command::new("lurk")
-        .version("0.2.7")
+        .version("0.2.8")
         .trailing_var_arg(true)
         .arg(
             Arg::new("syscall-number")

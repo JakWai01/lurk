@@ -318,16 +318,18 @@ fn run_tracer(child: Pid, config: Config) {
                             if (x.rax as i32).abs() > 32768 {
                                 if !config.file.is_empty() {
                                     if let Some(mut fd) = file {
-                                        if config.syscall_times {
-                                            write!(
-                                                &mut fd,
-                                                "{} = 0x{:x} <{:.6}> \n",
-                                                output, x.rax as i32, elapsed
-                                            )
-                                            .unwrap();
-                                        } else {
-                                            write!(&mut fd, "{} = 0x{:x}\n", output, x.rax as i32)
+                                        if !config.json {
+                                            if config.syscall_times {
+                                                write!(
+                                                    &mut fd,
+                                                    "{} = 0x{:x} <{:.6}> \n",
+                                                    output, x.rax as i32, elapsed
+                                                )
                                                 .unwrap();
+                                            } else {
+                                                write!(&mut fd, "{} = 0x{:x}\n", output, x.rax as i32)
+                                                    .unwrap();
+                                            }
                                         }
 
                                         if config.json && !config.summary_only && !config.summary {
@@ -389,16 +391,18 @@ fn run_tracer(child: Pid, config: Config) {
                             } else {
                                 if !config.file.is_empty() {
                                     if let Some(mut fd) = file {
-                                        if config.syscall_times {
-                                            write!(
-                                                &mut fd,
-                                                "{} = {} <{:.6}>\n",
-                                                output, x.rax as i32, elapsed
-                                            )
-                                            .unwrap();
-                                        } else {
-                                            write!(&mut fd, "{} = {}\n", output, x.rax as i32)
+                                        if !config.json {
+                                            if config.syscall_times {
+                                                write!(
+                                                    &mut fd,
+                                                    "{} = {} <{:.6}>\n",
+                                                    output, x.rax as i32, elapsed
+                                                )
                                                 .unwrap();
+                                            } else {
+                                                write!(&mut fd, "{} = {}\n", output, x.rax as i32)
+                                                    .unwrap();
+                                            }
                                         }
 
                                         if config.json && !config.summary_only && !config.summary {
