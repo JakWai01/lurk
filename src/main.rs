@@ -177,7 +177,8 @@ fn run_tracer(child: Pid, config: Config) {
                         system_call_tuple.5,
                         system_call_tuple.6,
                     ];
-                    let mut arguments: Vec<String> = Vec::new();
+
+                    let mut arguments: Vec<serde_json::Value> = Vec::new();
 
                     // If --syscall-number is set, display the number of the system call at the
                     // start of the output
@@ -245,10 +246,11 @@ fn run_tracer(child: Pid, config: Config) {
                         match arg {
                             system_call_names::SystemCallArgumentType::Integer => {
                                 output.push_str(format!("{:?}", value).as_str());
-                                arguments.push(format!("{:?}", value));
+                                arguments.push(value.into());
                             }
                             system_call_names::SystemCallArgumentType::String => {
                                 let mut string = read_string(child, reg as *mut c_void);
+                                arguments.push(string.clone().into());
                                 let truncated_string = if config.no_abbrev {
                                     string.as_str()
                                 } else {
@@ -260,15 +262,14 @@ fn run_tracer(child: Pid, config: Config) {
                                     string = format!("{:?}...", truncated_string);
                                 }
                                 output.push_str(string.as_str());
-                                arguments.push(string);
                             }
                             system_call_names::SystemCallArgumentType::Address => {
                                 if value == 0 {
                                     output.push_str("NULL");
-                                    arguments.push(String::from("NULL"));
+                                    arguments.push(serde_json::Value::Null);
                                 } else {
                                     output.push_str(format!("0x{:x}", value as i32).as_str());
-                                    arguments.push(format!("0x{:x}", value as i32));
+                                    arguments.push((value as i32).into());
                                 }
                             }
                             system_call_names::SystemCallArgumentType::None => {
