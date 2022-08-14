@@ -245,7 +245,7 @@ fn run_tracer(child: Pid, config: Config) {
                         // Handle type of system call argument accordingly
                         match arg {
                             system_call_names::SystemCallArgumentType::Integer => {
-                                output.push_str(format!("{:?}", value).as_str());
+                                output.push_str(format!("{}", value).as_str());
                                 arguments.push(value.into());
                             }
                             system_call_names::SystemCallArgumentType::String => {
@@ -257,9 +257,9 @@ fn run_tracer(child: Pid, config: Config) {
                                     truncate(string.as_str(), config.string_limit as usize)
                                 };
                                 if string.eq(truncated_string) {
-                                    string = format!("{:?}", string);
+                                    string = format!("{}", string).into();
                                 } else {
-                                    string = format!("{:?}...", truncated_string);
+                                    string = format!("{}...", truncated_string).into();
                                 }
                                 output.push_str(string.as_str());
                             }
@@ -268,8 +268,8 @@ fn run_tracer(child: Pid, config: Config) {
                                     output.push_str("NULL");
                                     arguments.push(serde_json::Value::Null);
                                 } else {
-                                    output.push_str(format!("0x{:x}", value as i32).as_str());
-                                    arguments.push((value as i32).into());
+                                    output.push_str(format!("{:#x}", value).as_str());
+                                    arguments.push(format!("{:#x}", value).into());
                                 }
                             }
                             system_call_names::SystemCallArgumentType::None => {
@@ -308,7 +308,7 @@ fn run_tracer(child: Pid, config: Config) {
                             || system_calls.len() == 0
                         {
                             let return_value: String = if (x.rax as i32).abs() > 32768 {
-                                format!("0x{:x}", x.rax as i32)
+                                format!("{:#x}", x.rax)
                             } else {
                                 format!("{}", x.rax as i32)
                             };
@@ -323,12 +323,12 @@ fn run_tracer(child: Pid, config: Config) {
                                             if config.syscall_times {
                                                 write!(
                                                     &mut fd,
-                                                    "{} = 0x{:x} <{:.6}> \n",
+                                                    "{} = {:#x} <{:.6}> \n",
                                                     output, x.rax as i32, elapsed
                                                 )
                                                 .unwrap();
                                             } else {
-                                                write!(&mut fd, "{} = 0x{:x}\n", output, x.rax as i32)
+                                                write!(&mut fd, "{} = {:#x}\n", output, x.rax as i32)
                                                     .unwrap();
                                             }
                                         }
@@ -358,7 +358,7 @@ fn run_tracer(child: Pid, config: Config) {
                                                 output,
                                                 Yellow
                                                     .bold()
-                                                    .paint(format!("0x{:x}", x.rax as i32)),
+                                                    .paint(format!("{:#x}", x.rax)),
                                                 elapsed
                                             );
                                         } else {
@@ -367,7 +367,7 @@ fn run_tracer(child: Pid, config: Config) {
                                                 output,
                                                 Yellow
                                                     .bold()
-                                                    .paint(format!("0x{:x}", x.rax as i32))
+                                                    .paint(format!("{:#x}", x.rax))
                                             );
                                         }
                                     }
@@ -449,14 +449,14 @@ fn run_tracer(child: Pid, config: Config) {
                                                 println!(
                                                     "{} = {} <{:.6}>",
                                                     output,
-                                                    Red.bold().paint((x.rax as i32).to_string()),
+                                                    Red.bold().paint((x.rax as i64).to_string()),
                                                     elapsed
                                                 );
                                             } else {
                                                 println!(
                                                     "{} = {}",
                                                     output,
-                                                    Red.bold().paint((x.rax as i32).to_string())
+                                                    Red.bold().paint((x.rax as i64).to_string())
                                                 );
                                             }
                                         }
