@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 ansi_term = "0.12"
-clap = { version = "4.1", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
 nix = "0.26"
 linux-personality = "1"
 libc = "0.2"
