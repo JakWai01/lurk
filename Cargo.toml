@@ -12,13 +12,13 @@ path = "src/main.rs"
 
 [dependencies]
 ansi_term = "0.12"
-clap = { version = "3.1.18", features = ["derive"] }
-nix = "0.24.1"
-linux-personality = "1.0"
-libc = "0.2.92"
-byteorder = "1.4.3"
-anyhow = "1.0"
+clap = { version = "4.1", features = ["derive"] }
+nix = "0.26"
+linux-personality = "1"
+libc = "0.2"
+byteorder = "1"
+anyhow = "1"
 stopwatch = "0.0.7"
-users = "0.11.0"
+users = "0.11"
 regex = "1"
-serde_json = "1.0"
+serde_json = "1"
