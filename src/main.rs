@@ -1,3 +1,13 @@
+#![deny(clippy::all, clippy::pedantic)]
+//
+// TODO: re-check the casting lints - they might indicate an issue
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::redundant_closure_for_method_calls
+)]
+
 mod args;
 mod system_call_names;
 
@@ -11,7 +21,7 @@ use ansi_term::Colour::{Blue, Green, Red, Yellow};
 use ansi_term::Style;
 use byteorder::{LittleEndian, WriteBytesExt};
 use clap::Parser;
-use libc::{c_long, c_void};
+use libc::{c_long, c_ulonglong, c_void};
 use linux_personality::{personality, ADDR_NO_RANDOMIZE};
 use nix::sys::ptrace;
 use nix::sys::ptrace::AddressType;
@@ -19,8 +29,8 @@ use nix::sys::ptrace::Options;
 use nix::sys::wait::wait;
 use nix::unistd::{fork, ForkResult, Pid};
 use regex::Regex;
-use serde_json::json;
-use std::collections::HashMap;
+use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::unix::process::CommandExt;
@@ -38,163 +48,182 @@ fn main() {
             .map_err(|e| format!("Failed to ptrace attach {pid} ({e})"))
             .unwrap();
 
-        run_tracer(Pid::from_raw(pid), config);
+        Tracer::new(Pid::from_raw(pid), config).run_tracer();
     } else {
         match unsafe { fork() } {
             Ok(ForkResult::Child) => run_tracee(config),
-            Ok(ForkResult::Parent { child }) => run_tracer(child, config),
+            Ok(ForkResult::Parent { child }) => Tracer::new(child, config).run_tracer(),
             Err(err) => panic!("[main] fork() failed: {err}"),
         }
     }
 }
 
-fn run_tracer(child: Pid, config: Args) {
-    let mut system_call_timer_start: Option<SystemTime> = None;
-    let mut system_call_timer_stop: HashMap<u64, u64> = HashMap::new();
-    let mut second_ptrace_invocation = true;
+#[derive(Debug)]
+struct Tracer {
+    child: Pid,
+    config: Args,
+    system_call_timer_start: Option<SystemTime>,
+    system_call_timer_stop: HashMap<u64, u64>,
+    second_ptrace_invocation: bool,
+    successful_system_calls: Vec<u64>,
+    failed_system_calls: Vec<u64>,
+    set_follow_fork_option: bool,
+    expr_negation: bool,
+    suppress_system_calls: HashSet<&'static str>,
+    system_calls: HashSet<&'static str>,
+}
 
-    let mut successful_system_calls: Vec<u64> = Vec::new();
-    let mut failed_system_calls: Vec<u64> = Vec::new();
+impl Tracer {
+    fn new(child: Pid, config: Args) -> Self {
+        let mut slf = Self {
+            child,
+            config,
+            system_call_timer_start: None,
+            system_call_timer_stop: HashMap::new(),
+            second_ptrace_invocation: false,
+            successful_system_calls: vec![],
+            failed_system_calls: vec![],
+            set_follow_fork_option: false,
+            expr_negation: false,
+            suppress_system_calls: HashSet::new(),
+            system_calls: HashSet::new(),
+        };
 
-    let mut set_follow_fork_option: bool = false;
+        let all_system_calls: HashSet<&'static str> = SYSTEM_CALLS.iter().map(|v| v.0).collect();
 
-    let mut expr_negation: bool = false;
-    let mut expr_filter_categories: Vec<String> = Vec::new();
+        // Sort system calls listed with --expr into their category to handle them accordingly
+        for token in &slf.config.expr {
+            let mut tokens = token.splitn(2, '=');
+            match (tokens.next(), tokens.next()) {
+                (Some(token_key), Some(mut token_value))
+                    if token_key == "t" || token_key == "trace" =>
+                {
+                    if token_value.starts_with('!') {
+                        slf.expr_negation = true;
+                        token_value = &token_value[1..];
+                    }
 
-    let mut suppress_system_calls: Vec<String> = Vec::new();
-    let mut filter_system_calls: Vec<String> = Vec::new();
-    let mut regex_system_call_patterns: Vec<String> = Vec::new();
-
-    // Sort system calls listed with --expr into their category to handle them accordingly
-    for token in &config.expr {
-        let arg: Vec<String> = token.split('=').map(|s| s.to_string()).collect();
-
-        match arg[0].as_str() {
-            "t" | "trace" => {
-                let mut argument_token: Vec<String> =
-                    arg[1].as_str().split(',').map(|s| s.to_string()).collect();
-                let first_char_in_argument_token: Vec<char> = argument_token[0].chars().collect();
-
-                expr_negation = first_char_in_argument_token[0] == '!';
-
-                if expr_negation {
-                    let first_token: Vec<char> = argument_token[0].chars().collect();
-                    argument_token[0] = first_token[1..].iter().cloned().collect::<String>();
-                }
-
-                for token_chars in argument_token {
-                    let chars: Vec<char> = token_chars.chars().collect();
-                    match chars[0] {
-                        '?' => suppress_system_calls
-                            .push(chars[1..].iter().cloned().collect::<String>()),
-                        '/' => regex_system_call_patterns
-                            .push(chars[1..].iter().cloned().collect::<String>()),
-                        '%' => expr_filter_categories
-                            .push(chars[1..].iter().cloned().collect::<String>()),
-                        _ => filter_system_calls.push(chars.iter().cloned().collect::<String>()),
+                    for part in token_value.split(',') {
+                        if let Some(part) = part.strip_prefix('?') {
+                            let val = all_system_calls.get(part);
+                            if let Some(val) = val {
+                                slf.suppress_system_calls.insert(val);
+                            } else {
+                                panic!("System call '{part}' is not valid!");
+                            }
+                        } else if let Some(part) = part.strip_prefix('/') {
+                            if let Ok(pattern) = Regex::new(part) {
+                                for system_call in SYSTEM_CALLS.iter() {
+                                    let system_call = system_call.0;
+                                    if pattern.is_match(system_call) {
+                                        slf.system_calls.insert(system_call);
+                                    }
+                                }
+                            } else {
+                                panic!("Invalid regex pattern: {part}");
+                            }
+                        } else if let Some(part) = part.strip_prefix('%') {
+                            let category: &[usize] = match part {
+                                "file" => &TRACE_FILE,
+                                "process" => &TRACE_PROCESS,
+                                "network" | "net" => &TRACE_NETWORK,
+                                "signal" => &TRACE_SIGNAL,
+                                "ipc" => &TRACE_IPC,
+                                "desc" => &TRACE_DESC,
+                                "memory" => &TRACE_MEMORY,
+                                "creds" => &TRACE_CREDS,
+                                "stat" => &TRACE_STAT,
+                                "lstat" => &TRACE_LSTAT,
+                                "fstat" => &TRACE_FSTAT,
+                                "%stat" => &TRACE_STAT_LIKE,
+                                "statfs" => &TRACE_STATFS,
+                                "fstatfs" => &TRACE_FSTATFS,
+                                "%statfs" => &TRACE_STATFS_LIKE,
+                                "clock" => &TRACE_CLOCK,
+                                "pure" => &TRACE_PURE,
+                                v => panic!("Category '{v}' is not valid!"),
+                            };
+                            let calls = category.iter().map(|e| SYSTEM_CALLS[*e].0);
+                            slf.system_calls.extend(calls);
+                        } else {
+                            let val = all_system_calls.get(part);
+                            if let Some(val) = val {
+                                slf.system_calls.insert(val);
+                            } else {
+                                panic!("System call '{part}' is not valid!");
+                            }
+                        }
                     }
                 }
+                _ => panic!("expr {token} is not supported. Please have a look at the syntax."),
             }
-            _ => panic!("This command is not supported. Please have a look at the syntax."),
         }
+
+        slf
     }
 
-    let mut regex_system_calls: Vec<String> = Vec::new();
-    // Check if system calls match to any regex_system_call_patterns pattern. If there is a match,
-    // add the system call to regex_system_calls
-    for i in 0..334 {
-        let mut is_match: bool = false;
-        let current_syscall = SYSTEM_CALLS[i as usize].0;
+    #[allow(clippy::too_many_lines)]
+    fn run_tracer(&mut self) {
+        let config = &self.config;
 
-        for pattern in &regex_system_call_patterns {
-            let re = Regex::new(pattern.as_str()).unwrap();
-            if re.is_match(current_syscall) {
-                is_match = true;
+        loop {
+            let mut file: Option<File> = None;
+            // If the given path is not empty, check if the file exists. If --file is set, write the
+            // output to the file.
+            if let Some(filepath) = &config.file {
+                file = Some(if filepath.exists() {
+                    OpenOptions::new()
+                        .append(true)
+                        .open(filepath)
+                        .expect("open failed!")
+                } else {
+                    File::create(filepath).expect("create failed!")
+                });
             }
-        }
-
-        if is_match {
-            regex_system_calls.push(String::from(current_syscall));
-        }
-    }
-
-    let mut system_calls: Vec<String> =
-        [&regex_system_calls[..], &filter_system_calls[..]].concat();
-    system_calls = apply_filter_categories(system_calls, expr_filter_categories);
-
-    loop {
-        let mut file: Option<File> = None;
-        // If the given path is not empty, check if the file exists. If --file is set, write the
-        // output to the file.
-        if let Some(filepath) = &config.file {
-            file = Some(if !filepath.exists() {
-                File::create(filepath).expect("create failed!")
-            } else {
-                OpenOptions::new()
-                    .append(true)
-                    .open(filepath)
-                    .expect("open failed!")
-            });
-        }
-        // Wait for the next system call
-        wait().unwrap();
-        // If --follow-forks is set, set options to follow forks
-        if !set_follow_fork_option {
-            if config.follow_forks {
-                ptrace::setoptions(
-                    child,
-                    Options::PTRACE_O_TRACEFORK
-                        | Options::PTRACE_O_TRACEVFORK
-                        | Options::PTRACE_O_TRACECLONE,
-                )
-                .unwrap();
+            // Wait for the next system call
+            wait().unwrap();
+            // If --follow-forks is set, set options to follow forks
+            if !self.set_follow_fork_option {
+                if config.follow_forks {
+                    ptrace::setoptions(
+                        self.child,
+                        Options::PTRACE_O_TRACEFORK
+                            | Options::PTRACE_O_TRACEVFORK
+                            | Options::PTRACE_O_TRACECLONE,
+                    )
+                    .unwrap();
+                }
+                self.set_follow_fork_option = true;
             }
-            set_follow_fork_option = true;
-        }
 
-        let reg;
-        // Read registers
-        match ptrace::getregs(child) {
-            Ok(x) => {
-                if x.orig_rax < 336 {
-                    reg = x.rsi;
-
-                    let system_call_tuple = SYSTEM_CALLS[(x.orig_rax) as usize];
-
-                    let argument_type_array = [
-                        system_call_tuple.1,
-                        system_call_tuple.2,
-                        system_call_tuple.3,
-                        system_call_tuple.4,
-                        system_call_tuple.5,
-                        system_call_tuple.6,
-                    ];
-
-                    let mut arguments: Vec<serde_json::Value> = Vec::new();
+            // Read registers
+            match ptrace::getregs(self.child) {
+                Ok(x) if x.orig_rax < 336 => {
+                    let syscall_id = x.orig_rax;
+                    let (syscall, syscall_args) = SYSTEM_CALLS[syscall_id as usize];
 
                     // If --syscall-number is set, display the number of the system call at the
                     // start of the output
                     let mut output = if file.is_some() {
-                        let child = child.as_raw();
-                        let rax = SYSTEM_CALLS[(x.orig_rax) as usize].0;
+                        let child = self.child.as_raw();
                         if config.syscall_number {
-                            format!("[{child}] {:>3} {rax}(", x.orig_rax)
+                            format!("[{child}] {syscall_id:>3} {syscall}(")
                         } else {
-                            format!("[{child}] {rax}(")
+                            format!("[{child}] {syscall}(")
                         }
                     } else {
-                        let child = Blue.bold().paint(child.as_raw().to_string());
-                        let rax = SYSTEM_CALLS[(x.orig_rax) as usize].0;
-                        let rax = Style::new().bold().paint(rax);
+                        let child = Blue.bold().paint(self.child.as_raw().to_string());
+                        let syscall = Style::new().bold().paint(syscall);
                         if config.syscall_number {
-                            format!("[{child}] {:>3} {rax}(", x.orig_rax)
+                            format!("[{child}] {syscall_id:>3} {syscall}(")
                         } else {
-                            format!("[{child}] {rax}(")
+                            format!("[{child}] {syscall}(")
                         }
                     };
-                    let mut first_comma = true;
+
                     // Handle system call arguments
-                    for (i, arg) in argument_type_array.iter().enumerate() {
+                    let mut arguments: Vec<Value> = Vec::new();
+                    for (i, arg) in syscall_args.iter().enumerate() {
                         let value = match i {
                             0 => x.rdi,
                             1 => x.rsi,
@@ -202,336 +231,301 @@ fn run_tracer(child: Pid, config: Args) {
                             3 => x.r10,
                             4 => x.r8,
                             5 => x.r9,
-                            val => panic!("Invalid system call definition '{val}'!"),
+                            v => panic!("Invalid system call definition '{v}'!"),
                         };
-                        match arg {
-                            SystemCallArgumentType::None => continue,
-                            SystemCallArgumentType::Integer
-                            | SystemCallArgumentType::String
-                            | SystemCallArgumentType::Address => {
-                                if first_comma {
-                                    first_comma = false;
-                                } else {
-                                    output.push_str(", ")
-                                }
-                            }
+                        let Some(arg) = arg else { continue };
+                        if i > 0 {
+                            output.push_str(", ");
                         }
                         // Handle type of system call argument accordingly
                         match arg {
                             SystemCallArgumentType::Integer => {
-                                output.push_str(format!("{value}").as_str());
+                                output.push_str(&value.to_string());
                                 arguments.push(value.into());
                             }
                             SystemCallArgumentType::String => {
-                                let mut string = read_string(child, reg as *mut c_void);
-                                arguments.push(string.clone().into());
-                                let truncated_string = if config.no_abbrev {
-                                    string.as_str()
+                                output.push('"');
+                                let string = self.read_string(x.rsi as *mut c_void);
+                                if config.no_abbrev {
+                                    output.push_str(&string);
                                 } else {
-                                    truncate(
-                                        string.as_str(),
-                                        config.string_limit.unwrap_or(STRING_LIMIT),
-                                    )
+                                    let limit = config.string_limit.unwrap_or(STRING_LIMIT);
+                                    match string.chars().as_str().get(..limit) {
+                                        None => output.push_str(&string),
+                                        Some(s) => output.push_str(&format!("{s}...")),
+                                    }
                                 };
-                                if string != truncated_string {
-                                    string = format!("{truncated_string}...");
-                                }
-                                output.push_str(string.as_str());
+                                output.push('"');
+                                arguments.push(string.into());
                             }
                             SystemCallArgumentType::Address => {
                                 if value == 0 {
                                     output.push_str("NULL");
-                                    arguments.push(serde_json::Value::Null);
+                                    arguments.push(Value::Null);
                                 } else {
-                                    output.push_str(format!("{value:#x}").as_str());
+                                    output.push_str(&format!("{value:#x}"));
                                     arguments.push(format!("{value:#x}").into());
                                 }
                             }
-                            SystemCallArgumentType::None => {
-                                continue;
-                            }
                         }
                     }
-
                     output.push(')');
+
                     // Only print output at second invocation of ptrace (ptrace gets invoked twice
                     // per system call. Once before and once after execution).
-                    if second_ptrace_invocation || x.orig_rax == 59 || x.orig_rax == 231 {
+                    if self.second_ptrace_invocation || syscall_id == 59 || syscall_id == 231 {
                         let end = SystemTime::now();
                         let mut elapsed: u128 = 0;
                         // Measure system call execution time
-                        if let Some(i) = system_call_timer_start {
+                        if let Some(i) = self.system_call_timer_start {
                             elapsed = end.duration_since(i).unwrap_or_default().as_millis();
-                            let syscall = x.orig_rax;
-
-                            if let Some(old_value) = system_call_timer_stop.get(&syscall) {
+                            if let Some(old_value) = self.system_call_timer_stop.get(&syscall_id) {
                                 let new_value = old_value + elapsed as u64;
-                                system_call_timer_stop.insert(syscall, new_value);
+                                self.system_call_timer_stop.insert(syscall_id, new_value);
                             } else {
-                                system_call_timer_stop.insert(syscall, elapsed as u64);
+                                self.system_call_timer_stop
+                                    .insert(syscall_id, elapsed as u64);
                             }
                         };
                         // Print output for the current system call if the filter expression did
                         // not sort it out beforehand. Furthermore, check if the filter expression
                         // was negated.
-                        if system_calls
-                            .contains(&String::from(SYSTEM_CALLS[(x.orig_rax) as usize].0))
-                            && !expr_negation
-                            || !system_calls
-                                .contains(&String::from(SYSTEM_CALLS[(x.orig_rax) as usize].0))
-                                && expr_negation
-                            || system_calls.is_empty()
+                        if self.system_calls.contains(syscall) && !self.expr_negation
+                            || !self.system_calls.contains(syscall) && self.expr_negation
+                            || self.system_calls.is_empty()
                         {
-                            let return_value: String = if (x.rax as i32).abs() > 32768 {
-                                format!("{:#x}", x.rax)
-                            } else {
-                                format!("{}", x.rax as i32)
-                            };
+                            let ret_code = x.rax;
+                            let ret_i32 = ret_code as i32;
 
                             // Handle return value. The return value is distinguished into
                             // different categories (successful, failed, address) and handled
                             // accordingly
-                            if (x.rax as i32).abs() > 32768 {
+                            if ret_i32.abs() > 32768 {
                                 if let Some(mut fd) = file {
                                     if !config.json {
-                                        let rax = x.rax as i32;
                                         if config.syscall_times {
-                                            writeln!(&mut fd, "{output} = {rax:#x} <{elapsed:.6}>")
-                                                .unwrap();
+                                            writeln!(
+                                                &mut fd,
+                                                "{output} = {ret_i32:#x} <{elapsed:.6}>"
+                                            )
+                                            .unwrap();
                                         } else {
-                                            writeln!(&mut fd, "{output} = {rax:#x}").unwrap();
+                                            writeln!(&mut fd, "{output} = {ret_i32:#x}").unwrap();
                                         }
                                     }
 
                                     if config.json
                                         && !config.summary_only
                                         && !config.summary
-                                        && ((config.successful_only && (x.rax as i32) >= 0)
-                                            || (config.failed_only && (x.rax as i32) < 0)
-                                            || (!config.failed_only && !config.successful_only))
+                                        && config.should_print(ret_i32 >= 0)
                                     {
-                                        let json = json!({
-                                            "syscall": SYSTEM_CALLS[x.orig_rax as usize].0,
-                                            "args": arguments,
-                                            "result": return_value,
-                                            "pid": child.as_raw().to_string(),
-                                            "type": "SYSCALL"
-                                        });
-
+                                        let json = self.to_json(syscall, &arguments, ret_code);
                                         write!(&mut fd, "{json}").unwrap();
                                     }
                                 } else if !config.summary_only {
                                     if !config.failed_only && !config.json {
-                                        let rax = Yellow.bold().paint(format!("{:#x}", x.rax));
+                                        let ret = Yellow.bold().paint(format!("{ret_code:#x}"));
                                         if config.syscall_times {
-                                            println!("{output} = {rax} <{elapsed:.6}>");
+                                            println!("{output} = {ret} <{elapsed:.6}>");
                                         } else {
-                                            println!("{output} = {rax}");
+                                            println!("{output} = {ret}");
                                         }
                                     }
 
                                     if config.json
                                         && !config.summary
-                                        && ((config.successful_only && (x.rax as i32) >= 0)
-                                            || (config.failed_only && (x.rax as i32) < 0)
-                                            || (!config.failed_only && !config.successful_only))
+                                        && config.should_print(ret_i32 >= 0)
                                     {
-                                        let json = json!({
-                                            "syscall": SYSTEM_CALLS[x.orig_rax as usize].0,
-                                            "args": arguments,
-                                            "result": return_value,
-                                            "pid": child.as_raw().to_string(),
-                                            "type": "SYSCALL"
-                                        });
-
+                                        let json = self.to_json(syscall, &arguments, ret_code);
                                         println!("{json}");
                                     }
                                 }
                             } else if let Some(mut fd) = file {
                                 if !config.json {
-                                    let rax = x.rax as i32;
                                     if config.syscall_times {
-                                        writeln!(&mut fd, "{output} = {rax} <{elapsed:.6}>")
+                                        writeln!(&mut fd, "{output} = {ret_i32} <{elapsed:.6}>")
                                             .unwrap();
                                     } else {
-                                        writeln!(&mut fd, "{output} = {rax}").unwrap();
+                                        writeln!(&mut fd, "{output} = {ret_i32}").unwrap();
                                     }
                                 }
 
                                 if config.json
                                     && !config.summary_only
                                     && !config.summary
-                                    && ((config.successful_only && (x.rax as i32) >= 0)
-                                        || (config.failed_only && (x.rax as i32) < 0)
-                                        || (!config.failed_only && !config.successful_only))
+                                    && config.should_print(ret_i32 >= 0)
                                 {
-                                    let json = json!({
-                                        "syscall": SYSTEM_CALLS[x.orig_rax as usize].0,
-                                        "args": arguments,
-                                        "result": return_value,
-                                        "pid": child.as_raw().to_string(),
-                                        "type": "SYSCALL"
-                                    });
-
+                                    let json = self.to_json(syscall, &arguments, ret_code);
                                     write!(&mut fd, "{json}").unwrap();
                                 }
                             } else {
-                                if (x.rax as i32) < 0
-                                    && ((!expr_negation
-                                        && !suppress_system_calls.contains(&String::from(
-                                            SYSTEM_CALLS[(x.orig_rax) as usize].0,
-                                        )))
-                                        || (expr_negation
-                                            && suppress_system_calls.contains(&String::from(
-                                                SYSTEM_CALLS[(x.orig_rax) as usize].0,
-                                            )))
-                                        || suppress_system_calls.is_empty())
+                                if ret_i32 < 0
+                                    && ((!self.expr_negation
+                                        && !self.suppress_system_calls.contains(syscall))
+                                        || (self.expr_negation
+                                            && self.suppress_system_calls.contains(syscall))
+                                        || self.suppress_system_calls.is_empty())
                                 {
-                                    failed_system_calls.push(x.orig_rax);
+                                    self.failed_system_calls.push(syscall_id);
 
                                     if !config.successful_only
                                         && !config.summary_only
                                         && !config.json
                                     {
+                                        let ret = Red.bold().paint((ret_code as i64).to_string());
                                         if config.syscall_times {
-                                            println!(
-                                                "{output} = {} <{elapsed:.6}>",
-                                                Red.bold().paint((x.rax as i64).to_string())
-                                            );
+                                            println!("{output} = {ret} <{elapsed:.6}>");
                                         } else {
-                                            println!(
-                                                "{output} = {}",
-                                                Red.bold().paint((x.rax as i64).to_string())
-                                            );
+                                            println!("{output} = {ret}");
                                         }
                                     }
                                 }
-                                if (x.rax as i32) >= 0
+                                if ret_i32 >= 0
                                     && !config.failed_only
                                     && !config.summary_only
                                     && !config.json
                                 {
+                                    let ret = Green.bold().paint(ret_i32.to_string());
                                     if config.syscall_times {
-                                        println!(
-                                            "{output} = {} <{elapsed:.6}>",
-                                            Green.bold().paint((x.rax as i32).to_string())
-                                        );
+                                        println!("{output} = {ret} <{elapsed:.6}>");
                                     } else {
-                                        println!(
-                                            "{output} = {}",
-                                            Green.bold().paint((x.rax as i32).to_string())
-                                        );
+                                        println!("{output} = {ret}");
                                     }
                                 }
                                 if config.json
                                     && !config.summary_only
                                     && !config.summary
-                                    && ((config.successful_only && (x.rax as i32) >= 0)
-                                        || (config.failed_only && (x.rax as i32) < 0)
-                                        || (!config.failed_only && !config.successful_only))
+                                    && config.should_print(ret_i32 >= 0)
                                 {
-                                    let json = json!({
-                                        "syscall": SYSTEM_CALLS[x.orig_rax as usize].0,
-                                        "args": arguments,
-                                        "result": return_value,
-                                        "pid": child.as_raw().to_string(),
-                                        "type": "SYSCALL"
-                                    });
-
+                                    let json = self.to_json(syscall, &arguments, ret_code);
                                     println!("{json}");
                                 }
                             }
                         }
 
-                        second_ptrace_invocation = false;
-                        system_call_timer_start = None;
+                        self.second_ptrace_invocation = false;
+                        self.system_call_timer_start = None;
 
                         if config.summary_only || config.summary {
-                            successful_system_calls.push(x.orig_rax);
+                            self.successful_system_calls.push(syscall_id);
                         }
                     } else {
-                        system_call_timer_start = Some(SystemTime::now());
-                        second_ptrace_invocation = true;
+                        self.system_call_timer_start = Some(SystemTime::now());
+                        self.second_ptrace_invocation = true;
                     }
                 }
-            }
-            Err(_) => {
+                Ok(_) => {
+                    // TODO: report ignored system call ID that is not in the list
+                }
+                Err(_) => {
+                    break;
+                }
+            };
+
+            if ptrace::syscall(self.child, None).is_err() {
                 break;
             }
-        };
-
-        match ptrace::syscall(child, None) {
-            Ok(_) => continue,
-            Err(_) => break,
-        }
-    }
-    if !config.json && (config.summary_only || config.summary) {
-        let mut total_elapsed_time = 0;
-        for value in system_call_timer_stop.values() {
-            total_elapsed_time += value;
         }
 
-        println!("% time     seconds  usecs/call     calls    errors syscall");
-        println!("------ ----------- ----------- --------- --------- ----------------");
+        if !config.json && (config.summary_only || config.summary) {
+            let mut total_elapsed_time = 0;
+            for value in self.system_call_timer_stop.values() {
+                total_elapsed_time += value;
+            }
 
-        let syscall_map = count_element_function(&successful_system_calls);
-        let mut syscall_sorted: Vec<_> = syscall_map.iter().collect();
-        syscall_sorted.sort_by(|x, y| x.0.cmp(y.0));
+            println!("% time     seconds  usecs/call     calls    errors syscall");
+            println!("------ ----------- ----------- --------- --------- ----------------");
 
-        let error_map = count_element_function(failed_system_calls);
-        let mut number_of_failed_system_calls = 0;
-        // Construct summary columns
-        for (key, value) in &syscall_sorted {
-            println!(
-                "{:>6} {:>11} {:>11} {value:>9} {:>9} {}",
-                {
-                    if let Some(i) = system_call_timer_stop.get(key) {
-                        if total_elapsed_time != 0 {
-                            format!("{:.2}", *i as f32 / (total_elapsed_time as f32 / 100_f32))
+            let syscall_map = count_element_function(&self.successful_system_calls);
+            let mut syscall_sorted: Vec<_> = syscall_map.iter().collect();
+            syscall_sorted.sort_by_key(|v| v.0);
+
+            let error_map = count_element_function(&self.failed_system_calls);
+            let mut number_of_failed_system_calls = 0;
+
+            // Construct summary columns
+            for (key, value) in syscall_sorted {
+                let mut percent_time = 0_f32;
+                let stop_time = self.system_call_timer_stop.get(key);
+                let (seconds, calls) = if let Some(v) = stop_time {
+                    if total_elapsed_time != 0 {
+                        percent_time = *v as f32 / (total_elapsed_time as f32 / 100_f32);
+                    }
+                    (
+                        *v as f32 / 1000_f32,
+                        (*v as f32 / 1000_f32) / (*value as f32) * 1_000_000_f32,
+                    )
+                } else {
+                    (0.0, 0.0)
+                };
+
+                println!(
+                    "{percent_time:>6.2} {seconds:>11.6} {calls:>11.0} {value:>9} {:>9} {}",
+                    {
+                        if let Some(i) = error_map.get(key) {
+                            number_of_failed_system_calls += i;
+                            i.to_string()
                         } else {
-                            "0.00".to_string()
+                            String::new()
                         }
-                    } else {
-                        "0.00".to_string()
-                    }
-                },
-                {
-                    if let Some(i) = system_call_timer_stop.get(key) {
-                        format!("{:.6}", *i as f32 / 1000_f32)
-                    } else {
-                        "0.000000".to_string()
-                    }
-                },
-                {
-                    if let Some(i) = system_call_timer_stop.get(key) {
-                        format!(
-                            "{:.0}",
-                            (*i as f32 / 1000_f32) / (**value as f32) * 1_000_000_f32
-                        )
-                    } else {
-                        "0".to_string()
-                    }
-                },
-                {
-                    if let Some(i) = error_map.get(key) {
-                        number_of_failed_system_calls += i;
-                        format!("{i}")
-                    } else {
-                        String::new()
-                    }
-                },
-                SYSTEM_CALLS[***key as usize].0
-            );
-        }
+                    },
+                    SYSTEM_CALLS[**key as usize].0
+                );
+            }
 
-        let number_of_successful_system_calls = successful_system_calls.len();
-
-        println!("------ ----------- ----------- --------- --------- ----------------");
-        println!(
+            println!("------ ----------- ----------- --------- --------- ----------------");
+            println!(
             "100.00 {:>11.6} {:>11.0} {total_elapsed_time:>9} {number_of_failed_system_calls:>9} total",
             total_elapsed_time as f32 / 1000_f32,
-            (total_elapsed_time as f32 / number_of_successful_system_calls as f32) * 1000_f32
+            (total_elapsed_time as f32 / self.successful_system_calls.len() as f32) * 1000_f32
         );
+        }
+    }
+
+    fn read_string(&self, address: AddressType) -> String {
+        let mut string = String::new();
+        // Move 8 bytes up each time for next read.
+        let mut count = 0;
+        let word_size = 8;
+
+        'done: loop {
+            let address = unsafe { address.offset(count) };
+
+            let res: c_long = match ptrace::read(self.child, address) {
+                Ok(c_long) => c_long,
+                Err(_) => break 'done,
+            };
+
+            let mut bytes: Vec<u8> = vec![];
+            bytes.write_i64::<LittleEndian>(res).unwrap_or_else(|err| {
+                panic!("Failed to write {res} as i64 LittleEndian: {err}");
+            });
+            for b in bytes {
+                if b == 0 {
+                    break 'done;
+                }
+                string.push(b as char);
+            }
+
+            count += word_size;
+        }
+
+        string
+    }
+
+    fn to_json(&self, syscall: &str, arguments: &Vec<Value>, ret_code: c_ulonglong) -> Value {
+        let ret_i32 = ret_code as i32;
+        json!({
+            "syscall": syscall,
+            "args": arguments,
+            "result": if ret_i32.abs() > 32768 {
+                format!("{ret_code:#x}")
+            } else {
+                ret_i32.to_string()
+            },
+            "pid": self.child.as_raw().to_string(),
+            "type": "SYSCALL"
+        })
     }
 }
 
@@ -543,10 +537,10 @@ fn run_tracee(config: Args) {
     personality(ADDR_NO_RANDOMIZE).unwrap();
     // Handle arguments passed to the program to be traced
     for (index, arg) in config.command.iter().enumerate() {
-        if index != 0 {
-            args.push(String::from(arg));
-        } else {
+        if index == 0 {
             program = arg.to_string();
+        } else {
+            args.push(String::from(arg));
         }
     }
 
@@ -572,98 +566,13 @@ fn run_tracee(config: Args) {
     exit(0)
 }
 
-fn read_string(pid: Pid, address: AddressType) -> String {
-    let mut string = String::new();
-    // Move 8 bytes up each time for next read.
-    let mut count = 0;
-    let word_size = 8;
-
-    'done: loop {
-        let mut bytes: Vec<u8> = vec![];
-        let address = unsafe { address.offset(count) };
-
-        let res: c_long = match ptrace::read(pid, address) {
-            Ok(c_long) => c_long,
-            Err(_) => break 'done,
-        };
-
-        bytes.write_i64::<LittleEndian>(res).unwrap_or_else(|err| {
-            panic!("Failed to write {res} as i64 LittleEndian: {err}");
-        });
-
-        for b in bytes {
-            if b != 0 {
-                string.push(b as char);
-            } else {
-                break 'done;
-            }
-        }
-        count += word_size;
-    }
-
-    string
-}
-
-fn truncate(s: &str, max_chars: usize) -> &str {
-    match s.char_indices().nth(max_chars) {
-        None => s,
-        Some((idx, _)) => &s[..idx],
-    }
-}
-
 fn count_element_function<I>(it: I) -> HashMap<I::Item, usize>
 where
     I: IntoIterator,
     I::Item: Eq + core::hash::Hash,
 {
-    let mut result = HashMap::new();
-
-    for item in it {
-        *result.entry(item).or_insert(0) += 1;
-    }
-
-    result
-}
-
-/// Add all `system_calls` from the given categories to the `system_calls` Vector
-fn apply_filter_categories(
-    mut system_calls: Vec<String>,
-    expr_filter_categories: Vec<String>,
-) -> Vec<String> {
-    for keyword in expr_filter_categories {
-        match keyword.as_str() {
-            "file" => add_traces(&mut system_calls, &TRACE_FILE),
-            "process" => add_traces(&mut system_calls, &TRACE_PROCESS),
-            "network" | "net" => add_traces(&mut system_calls, &TRACE_NETWORK),
-            "signal" => add_traces(&mut system_calls, &TRACE_SIGNAL),
-            "ipc" => add_traces(&mut system_calls, &TRACE_IPC),
-            "desc" => add_traces(&mut system_calls, &TRACE_DESC),
-            "memory" => add_traces(&mut system_calls, &TRACE_MEMORY),
-            "creds" => add_traces(&mut system_calls, &TRACE_CREDS),
-            "stat" => add_traces(&mut system_calls, &TRACE_STAT),
-            "lstat" => add_traces(&mut system_calls, &TRACE_LSTAT),
-            "fstat" => add_traces(&mut system_calls, &TRACE_FSTAT),
-            "%stat" => add_traces(&mut system_calls, &TRACE_STAT_LIKE),
-            "statfs" => add_traces(&mut system_calls, &TRACE_STATFS),
-            "fstatfs" => add_traces(&mut system_calls, &TRACE_FSTATFS),
-            "%statfs" => add_traces(&mut system_calls, &TRACE_STATFS_LIKE),
-            "clock" => add_traces(&mut system_calls, &TRACE_CLOCK),
-            "pure" => add_traces(&mut system_calls, &TRACE_PURE),
-            _ => panic!("This is not a valid option!"),
-        }
-    }
-    system_calls.sort();
-    system_calls.dedup();
-    system_calls
-}
-
-fn add_traces(system_calls: &mut Vec<String>, traces: &[usize]) {
-    *system_calls = [
-        system_calls,
-        &traces
-            .iter()
-            .map(|e| String::from(SYSTEM_CALLS[*e].0))
-            .collect::<Vec<String>>()[..],
-    ]
-    .concat();
+    it.into_iter().fold(HashMap::new(), |mut acc, x| {
+        *acc.entry(x).or_insert(0) += 1;
+        acc
+    })
 }
