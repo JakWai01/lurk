@@ -323,6 +323,6 @@ $ lurk --expr trace=openat,close,mmap ls
 
 ## License
 
-lurk (c) 2022 Jakob Waibel and contributors
+lurk (c) 2022-2023 Jakob Waibel, Yuri Astrakhan, and contributors
 
-SPDX-License-Identifier: AGPL-3.0
+SPDX-License-Identifier: MIT OR Apache-2.0

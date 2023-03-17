@@ -1,10 +1,10 @@
 [package]
 name = "lurk-cli"
-version = "0.2.9"
+version = "0.3.0"
 edition = "2021"
-authors = ["Jakob Waibel <mail@jakobwaibel.com>"]
+authors = ["Jakob Waibel <mail@jakobwaibel.com>", "Yuri Astrakhan <YuriAstrakhan@gmail.com>"]
 description = "lurk is a pretty (simple) alternative to strace."
-license = "AGPL-3.0"
+license = "MIT OR Apache-2.0"
 
 [[bin]]
 name = "lurk"
@@ -12,13 +12,11 @@ path = "src/main.rs"
 
 [dependencies]
 ansi_term = "0.12"
-clap = { version = "4", features = ["derive"] }
-nix = "0.26"
-linux-personality = "1"
-libc = "0.2"
 byteorder = "1"
-anyhow = "1"
-stopwatch = "0.0.7"
-users = "0.11"
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+linux-personality = "1"
+nix = "0.26"
 regex = "1"
 serde_json = "1"
+users = "0.11"

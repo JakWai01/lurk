@@ -53,3 +53,11 @@ pub struct Args {
     #[arg(required_unless_present = "attach")]
     pub command: Vec<String>,
 }
+
+impl Args {
+    pub fn should_print(&self, is_success: bool) -> bool {
+        (self.successful_only && is_success)
+            || (self.failed_only && !is_success)
+            || (!self.failed_only && !self.successful_only)
+    }
+}
