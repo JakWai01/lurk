@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 #[derive(Parser, Debug, Clone, PartialEq, Default)]
 #[command(name = "lurk", about, version)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Args {
     /// Display system call numbers
     #[arg(short = 'n', long)]
