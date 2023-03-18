@@ -11,11 +11,11 @@
 )]
 
 mod args;
-mod system_call_names;
-use anyhow::Result;
+mod syscalls_i64;
+use anyhow::{anyhow, Context, Result};
 
 use crate::args::{Args, Filter};
-use crate::system_call_names::{SystemCallArgumentType, SYSTEM_CALLS};
+use crate::syscalls_i64::{SystemCallArgumentType, SYSTEM_CALLS};
 use ansi_term::Colour::{Blue, Green, Red, Yellow};
 use ansi_term::Style;
 use byteorder::{LittleEndian, WriteBytesExt};
@@ -48,9 +48,8 @@ fn main() -> Result<()> {
     let config = Args::parse();
     // Check whether to attach to an existing process or create a new one
     if let Some(pid) = config.attach {
-        ptrace::attach(Pid::from_raw(pid))?;
-        // FIXME: anyhow for some reason can't use strings as errors
-        // .map_err(|e| &format!("Failed to ptrace attach {pid} ({e})"))?;
+        ptrace::attach(Pid::from_raw(pid))
+            .with_context(|| format!("Failed to ptrace attach to process {pid}"))?;
         Tracer::new(Pid::from_raw(pid), config)?.run_tracer()?;
     } else {
         match unsafe { fork() } {
@@ -348,7 +347,7 @@ impl Tracer {
             .iter()
             .filter_map(Option::as_ref)
             .enumerate()
-            .map(|(idx, arg)| (arg, get_arg_value(registers, idx)))
+            .map(|(idx, arg)| (arg, syscalls_i64::get_arg_value(registers, idx)))
             .map(|(arg, value)| match arg {
                 Int => value.into(),
                 Str => self.read_string(value).into(),
@@ -436,7 +435,7 @@ impl Tracer {
         buff.push('(');
         for (idx, arg) in syscall_args.iter().enumerate() {
             if let Some(arg) = arg {
-                let value = get_arg_value(registers, idx);
+                let value = syscalls_i64::get_arg_value(registers, idx);
                 if idx > 0 {
                     buff.push_str(", ");
                 }
@@ -483,8 +482,8 @@ fn run_tracee(config: Args) -> Result<()> {
     let mut program = String::new();
 
     ptrace::traceme()?;
-    // FIXME: for some reason cannot cast the error into anyhow result
-    personality(ADDR_NO_RANDOMIZE).unwrap();
+    personality(ADDR_NO_RANDOMIZE).map_err(|_| anyhow!("Unable to set ADDR_NO_RANDOMIZE"))?;
+
     // Handle arguments passed to the program to be traced
     for (index, arg) in config.command.iter().enumerate() {
         if index == 0 {
@@ -524,16 +523,4 @@ where
         *acc.entry(x).or_insert(0) += 1;
         acc
     })
-}
-
-fn get_arg_value(registers: user_regs_struct, i: usize) -> c_ulonglong {
-    match i {
-        0 => registers.rdi,
-        1 => registers.rsi,
-        2 => registers.rdx,
-        3 => registers.r10,
-        4 => registers.r8,
-        5 => registers.r9,
-        v => panic!("Invalid system call definition '{v}'!"),
-    }
 }

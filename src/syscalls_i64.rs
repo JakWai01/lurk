@@ -1,3 +1,5 @@
+use libc::{c_ulonglong, user_regs_struct};
+
 // #[derive(Copy, Clone)]
 pub enum SystemCallArgumentType {
     // Integer can be used to represent int, fd and size_t
@@ -670,3 +672,15 @@ pub static SYSTEM_CALLS: [(&str, [Option<SystemCallArgumentType>; 6]); 335] = [
     syscall!("io_pgetevents"),
     syscall!("rseq"),
 ];
+
+pub fn get_arg_value(registers: user_regs_struct, i: usize) -> c_ulonglong {
+    match i {
+        0 => registers.rdi,
+        1 => registers.rsi,
+        2 => registers.rdx,
+        3 => registers.r10,
+        4 => registers.r8,
+        5 => registers.r9,
+        v => panic!("Invalid system call index {v}!"),
+    }
+}
