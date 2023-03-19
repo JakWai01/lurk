@@ -98,7 +98,7 @@ dependencies = [
  "proc-macro-error",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -273,7 +273,9 @@ dependencies = [
  "linux-personality",
  "nix",
  "regex",
+ "serde",
  "serde_json",
+ "syscalls",
  "users",
 ]
 
@@ -368,7 +370,7 @@ dependencies = [
  "proc-macro-error-attr",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 1.0.109",
  "version_check",
 ]
 
@@ -464,6 +466,20 @@ name = "serde"
 version = "1.0.156"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "314b5b092c0ade17c00142951e50ced110ec27cea304b1037c6969246c2469a4"
+dependencies = [
+ "serde_derive",
+]
+
+[[package]]
+name = "serde_derive"
+version = "1.0.156"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7e29c4601e36bcec74a223228dce795f4cd3616341a4af93520ca1a837c087d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
 
 [[package]]
 name = "serde_json"
@@ -474,6 +490,17 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "serde_repr"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcec881020c684085e55a25f7fd888954d56609ef363479dc5a1305eb0d40cab"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.2",
 ]
 
 [[package]]
@@ -540,7 +567,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustversion",
- "syn",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -552,6 +579,28 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "syn"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59d3276aee1fa0c33612917969b5172b5be2db051232a6e4826f1a1a9191b045"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
+name = "syscalls"
+version = "0.6.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "535e4a480d47370482f8251117cba053e32067862c439dcd4c9ea4026d08f88e"
+dependencies = [
+ "cc",
+ "serde",
+ "serde_repr",
 ]
 
 [[package]]

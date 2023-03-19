@@ -1,12 +1,17 @@
+use crate::syscall_info::RetCode;
 use crate::syscalls_i64::{
-    SYSTEM_CALLS, TRACE_CLOCK, TRACE_CREDS, TRACE_DESC, TRACE_FILE, TRACE_FSTAT, TRACE_FSTATFS,
-    TRACE_IPC, TRACE_LSTAT, TRACE_MEMORY, TRACE_NETWORK, TRACE_PROCESS, TRACE_PURE, TRACE_SIGNAL,
-    TRACE_STAT, TRACE_STATFS, TRACE_STATFS_LIKE, TRACE_STAT_LIKE,
+    TRACE_CLOCK, TRACE_CREDS, TRACE_DESC, TRACE_FILE, TRACE_FSTAT, TRACE_FSTATFS, TRACE_IPC,
+    TRACE_LSTAT, TRACE_MEMORY, TRACE_NETWORK, TRACE_PROCESS, TRACE_PURE, TRACE_SIGNAL, TRACE_STAT,
+    TRACE_STATFS, TRACE_STATFS_LIKE, TRACE_STAT_LIKE,
 };
+use anyhow::bail;
 use clap::Parser;
+use libc::pid_t;
 use regex::Regex;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::str::FromStr;
+use syscalls::{Sysno, SysnoSet};
 
 #[derive(Parser, Debug, Clone, PartialEq, Default)]
 #[command(name = "lurk", about, version)]
@@ -16,9 +21,12 @@ pub struct Args {
     pub syscall_number: bool,
     /// Attach to a running process
     #[arg(short = 'p', long)]
-    pub attach: Option<i32>,
+    pub attach: Option<pid_t>,
+    /// Print un-abbreviated versions of strings
+    #[arg(short = 'v', long)]
+    pub no_abbrev: bool,
     /// Maximum string argument size to print
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with = "no_abbrev")]
     pub string_limit: Option<usize>,
     /// Name of the file to print output to
     #[arg(short = 'o', long)]
@@ -35,9 +43,6 @@ pub struct Args {
     /// Print only syscalls that returned with an error code
     #[arg(short = 'Z', long, conflicts_with = "successful_only")]
     pub failed_only: bool,
-    /// Print un-abbreviated versions of strings
-    #[arg(short = 'v', long)]
-    pub no_abbrev: bool,
     /// --env var=val adds an environment variable. --env var removes an environment variable.
     #[arg(short = 'E', long)]
     pub env: Vec<String>,
@@ -62,12 +67,11 @@ pub struct Args {
 }
 
 impl Args {
-    pub(crate) fn create_filter(&self) -> Filter {
-        let all_system_calls: HashSet<&'static str> = SYSTEM_CALLS.iter().map(|v| v.0).collect();
-
+    pub fn create_filter(&self) -> anyhow::Result<Filter> {
+        let all_syscall_names: HashMap<&'static str, Sysno> =
+            SysnoSet::all().iter().map(|v| (v.name(), v)).collect();
         let mut expr_negation = false;
-        let mut suppress_system_calls = HashSet::new();
-        let mut system_calls = HashSet::new();
+        let mut system_calls = SysnoSet::empty();
 
         // Sort system calls listed with --expr into their category to handle them accordingly
         for token in &self.expr {
@@ -82,26 +86,20 @@ impl Args {
                     }
 
                     for part in token_value.split(',') {
-                        if let Some(part) = part.strip_prefix('?') {
-                            let val = all_system_calls.get(part);
-                            if let Some(val) = val {
-                                suppress_system_calls.insert(*val);
-                            } else {
-                                panic!("System call '{part}' is not valid!");
-                            }
-                        } else if let Some(part) = part.strip_prefix('/') {
+                        if let Some(part) = part.strip_prefix('/') {
+                            // The '/' prefix followed by a regex pattern to match system calls
                             if let Ok(pattern) = Regex::new(part) {
-                                for system_call in SYSTEM_CALLS.iter() {
-                                    let system_call = system_call.0;
-                                    if pattern.is_match(system_call) {
-                                        system_calls.insert(system_call);
+                                for (syscall, sysno) in all_syscall_names.iter() {
+                                    if pattern.is_match(syscall) {
+                                        system_calls.insert(*sysno);
                                     }
                                 }
                             } else {
-                                panic!("Invalid regex pattern: {part}");
+                                bail!("Invalid regex pattern: {part}");
                             }
                         } else if let Some(part) = part.strip_prefix('%') {
-                            let category: &[usize] = match part {
+                            // The '%' prefix followed by the name of a syscalls category to trace
+                            system_calls = system_calls.union(match part {
                                 "file" => &TRACE_FILE,
                                 "process" => &TRACE_PROCESS,
                                 "network" | "net" => &TRACE_NETWORK,
@@ -119,41 +117,78 @@ impl Args {
                                 "%statfs" => &TRACE_STATFS_LIKE,
                                 "clock" => &TRACE_CLOCK,
                                 "pure" => &TRACE_PURE,
-                                v => panic!("Category '{v}' is not valid!"),
-                            };
-                            let calls = category.iter().map(|e| SYSTEM_CALLS[*e].0);
-                            system_calls.extend(calls);
+                                v => bail!("Category '{v}' is not valid!"),
+                            });
                         } else {
-                            let val = all_system_calls.get(part);
-                            if let Some(val) = val {
+                            // The optional '?' prefix will ignore unknown system calls
+                            let mut ignore_unknown = false;
+                            if let Some(v) = token_value.strip_prefix('?') {
+                                token_value = v;
+                                ignore_unknown = true;
+                            }
+                            if let Ok(val) = Sysno::from_str(part) {
                                 system_calls.insert(val);
-                            } else {
-                                panic!("System call '{part}' is not valid!");
+                            } else if !ignore_unknown {
+                                bail!("System call '{part}' is not valid!");
                             }
                         }
                     }
                 }
-                _ => panic!("expr {token} is not supported. Please have a look at the syntax."),
+                _ => bail!("expr {token} is not supported. Please have a look at the syntax."),
             }
         }
-        Filter {
-            expr_negation,
-            suppress_system_calls,
-            system_calls,
-        }
+        Ok(Filter {
+            ret_code_filter: if self.successful_only {
+                FilterRetCode::Oks
+            } else if self.failed_only {
+                FilterRetCode::Errs
+            } else {
+                FilterRetCode::All
+            },
+            sysno_filter: if system_calls.count() == 0 {
+                FilterSysno::All
+            } else if expr_negation {
+                FilterSysno::Except(system_calls)
+            } else {
+                FilterSysno::Only(system_calls)
+            },
+        })
     }
 }
 
+enum FilterRetCode {
+    All,
+    Oks,
+    Errs,
+}
+
+enum FilterSysno {
+    All,
+    Only(SysnoSet),
+    Except(SysnoSet),
+}
+
 pub struct Filter {
-    pub expr_negation: bool,
-    pub suppress_system_calls: HashSet<&'static str>,
-    pub system_calls: HashSet<&'static str>,
+    ret_code_filter: FilterRetCode,
+    sysno_filter: FilterSysno,
 }
 
 impl Filter {
-    pub fn show_syscall(&mut self, syscall_id: usize) -> bool {
-        let syscall = SYSTEM_CALLS[syscall_id].0;
-        self.suppress_system_calls.is_empty()
-            || self.suppress_system_calls.contains(syscall) != self.expr_negation
+    pub fn matches(&mut self, sys_no: Sysno, res: RetCode) -> bool {
+        (
+            // Should this result code be printed?
+            match self.ret_code_filter {
+                FilterRetCode::All => true,
+                FilterRetCode::Oks => matches!(res, RetCode::Ok(_) | RetCode::Address(_)),
+                FilterRetCode::Errs => matches!(res, RetCode::Err(_)),
+            }
+        ) && (
+            // Should this sys_no be printed?
+            match &self.sysno_filter {
+                FilterSysno::All => true,
+                FilterSysno::Only(sysno_set) => sysno_set.contains(sys_no),
+                FilterSysno::Except(sysno_set) => !sysno_set.contains(sys_no),
+            }
+        )
     }
 }

@@ -11,36 +11,30 @@
 )]
 
 mod args;
+mod syscall_info;
 mod syscalls_i64;
-use anyhow::{anyhow, Context, Result};
 
 use crate::args::{Args, Filter};
-use crate::syscalls_i64::{SystemCallArgumentType, SYSTEM_CALLS};
-use ansi_term::Colour::{Blue, Green, Red, Yellow};
-use ansi_term::Style;
-use byteorder::{LittleEndian, WriteBytesExt};
+use crate::syscall_info::{RetCode, SyscallInfo};
+use crate::syscalls_i64::enable_follow_forks;
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use comfy_table::modifiers::UTF8_ROUND_CORNERS;
 use comfy_table::presets::UTF8_BORDERS_ONLY;
 use comfy_table::CellAlignment::Right;
 use comfy_table::{Cell, ContentArrangement, Table};
-use libc::{c_long, c_ulonglong, c_void, user_regs_struct};
 use linux_personality::{personality, ADDR_NO_RANDOMIZE};
 use nix::sys::ptrace;
-use nix::sys::ptrace::Options;
 use nix::sys::wait::wait;
 use nix::unistd::{fork, ForkResult, Pid};
-use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::fmt::Display;
-use std::fmt::Write as _;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
+use syscalls::Sysno;
 use users::get_user_by_name;
-use SystemCallArgumentType::{Addr, Int, Str};
 
 const STRING_LIMIT: usize = 32;
 
@@ -64,41 +58,13 @@ fn main() -> Result<()> {
 struct Tracer {
     child: Pid,
     args: Args,
+    string_limit: Option<usize>,
     filter: Filter,
-    system_call_timer_start: Option<SystemTime>,
-    system_call_timer_stop: HashMap<usize, u128>,
-    successful_syscall: Vec<usize>,
-    failed_syscall: Vec<usize>,
+    system_call_timer_stop: HashMap<Sysno, Duration>,
+    successful_syscall: Vec<Sysno>,
+    failed_syscall: Vec<Sysno>,
     use_colors: bool,
-    output_file: Box<dyn Write>,
-}
-
-enum RetCode {
-    Success(i32),
-    Error(i32),
-    Address(usize),
-}
-
-impl RetCode {
-    fn new(ret_code: c_ulonglong) -> Self {
-        let ret_i32 = ret_code as isize;
-        if ret_i32.abs() > 32768 {
-            Self::Address(ret_code as usize)
-        } else if ret_i32 < 0 {
-            Self::Error(ret_i32 as i32)
-        } else {
-            Self::Success(ret_i32 as i32)
-        }
-    }
-}
-
-impl Display for RetCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Success(v) | Self::Error(v) => write!(f, "{v}"),
-            Self::Address(v) => write!(f, "{v:#X}"),
-        }
-    }
+    output: Box<dyn Write>,
 }
 
 impl Tracer {
@@ -107,12 +73,12 @@ impl Tracer {
         let use_colors;
         let output_file: Box<dyn Write> = if let Some(filepath) = &args.file {
             use_colors = false;
-            Box::new(
+            Box::new(BufWriter::new(
                 OpenOptions::new()
                     .create(true)
                     .append(true)
                     .open(filepath)?,
-            )
+            ))
         } else {
             use_colors = atty::is(atty::Stream::Stdout);
             Box::new(std::io::stdout())
@@ -120,46 +86,90 @@ impl Tracer {
 
         Ok(Self {
             child,
-            filter: args.create_filter(),
+            filter: args.create_filter()?,
+            string_limit: if args.no_abbrev {
+                None
+            } else {
+                Some(args.string_limit.unwrap_or(STRING_LIMIT))
+            },
             args,
-            system_call_timer_start: None,
             system_call_timer_stop: HashMap::new(),
             successful_syscall: vec![],
             failed_syscall: vec![],
             use_colors,
-            output_file,
+            output: output_file,
         })
     }
 
     #[allow(clippy::too_many_lines)]
     fn run_tracer(&mut self) -> Result<()> {
-        let mut on_syscall_end = false;
-        // If --follow-forks is set, set options to follow forks
+        // Use a flag to indicate if we have already set the needed options once in a loop (if required)
         let mut follow_forks = self.args.follow_forks;
+        // If Some(t), we expect the next syscall to be the first call of a pair of syscalls
+        let mut syscall_start_time: Option<SystemTime> = None;
 
         loop {
             // Wait for the next system call
             wait()?;
 
+            // TODO: move this out of the loop if possible, or explain why can't
             if follow_forks {
                 follow_forks = false;
-                ptrace::setoptions(
-                    self.child,
-                    Options::PTRACE_O_TRACEFORK
-                        | Options::PTRACE_O_TRACEVFORK
-                        | Options::PTRACE_O_TRACECLONE,
-                )?;
+                enable_follow_forks(self.child)?;
             }
 
             let Ok(registers) = ptrace::getregs(self.child) else {
-                break;
+                break ;
             };
 
-            // FIXME: what is 336???
-            if registers.orig_rax < 336 {
-                self.on_syscall(&mut on_syscall_end, registers)?;
+            // FIXME: what is 336??? The highest syscall we have is rseq = 334
+            //        per syscalls crate, there is a big gap after rseq until pidfd_send_signal = 424
+            if registers.orig_rax >= 336 {
+                continue;
+            }
+            let Ok(sys_no) = (registers.orig_rax as u32).try_into() else {
+                continue
+            };
+
+            // ptrace gets invoked twice per system call: once before and once after execution
+            // only print output at second ptrace invocation
+            // TODO: explain why these two syscalls should be handled differently
+            // TODO: should we handle if two subsequent syscalls are NOT the same?
+            if syscall_start_time.is_some()
+                || sys_no == Sysno::execve
+                || sys_no == Sysno::exit_group
+            {
+                let ret_code = RetCode::new(registers.rax);
+                if self.filter.matches(sys_no, ret_code) {
+                    // Measure system call execution time
+                    let elapsed = if let Some(start_time) = syscall_start_time {
+                        let elapsed = SystemTime::now()
+                            .duration_since(start_time)
+                            .unwrap_or_default();
+                        self.system_call_timer_stop
+                            .entry(sys_no)
+                            .and_modify(|v| *v += elapsed)
+                            .or_insert(elapsed);
+                        elapsed
+                    } else {
+                        Duration::default()
+                    };
+
+                    // TODO: if we follow forks, we should also capture/print the pid of the child process
+                    let info = SyscallInfo::new(self.child, sys_no, ret_code, registers, elapsed);
+                    if self.args.json {
+                        let json = serde_json::to_string(&info)?;
+                        writeln!(&mut self.output, "{json}")?;
+                    } else {
+                        self.write_syscall(info)?;
+                    }
+                }
+                syscall_start_time = None;
+                if self.args.summary_only || self.args.summary {
+                    self.successful_syscall.push(sys_no);
+                }
             } else {
-                // TODO: report ignored system call ID that is not in the list
+                syscall_start_time = Some(SystemTime::now());
             }
 
             if ptrace::syscall(self.child, None).is_err() {
@@ -174,44 +184,27 @@ impl Tracer {
         Ok(())
     }
 
-    fn on_syscall(&mut self, on_syscall_end: &mut bool, registers: user_regs_struct) -> Result<()> {
-        let syscall_id = registers.orig_rax as usize;
-
-        // only print output at second invocation of ptrace
-        // ptrace gets invoked twice per system call - once before and once after execution
-        if !*on_syscall_end && syscall_id != 59 && syscall_id != 231 {
-            self.system_call_timer_start = Some(SystemTime::now());
-            *on_syscall_end = true;
-        } else {
-            // Print output for the current system call if the filter expression did
-            // not sort it out beforehand. Furthermore, check if the filter expression
-            // was negated.
-            if self.filter.show_syscall(syscall_id) {
-                // Measure system call execution time
-                let elapsed = if let Some(start_time) = self.system_call_timer_start {
-                    let elapsed = SystemTime::now()
-                        .duration_since(start_time)
-                        .unwrap_or_default()
-                        .as_millis();
-                    self.system_call_timer_stop
-                        .entry(syscall_id)
-                        .and_modify(|v| *v += elapsed)
-                        .or_insert(elapsed);
-                    elapsed
-                } else {
-                    0
-                };
-                self.report_syscall(&RetCode::new(registers.rax), elapsed, syscall_id, registers)?;
-            }
-
-            self.system_call_timer_start = None;
-
-            if self.args.summary_only || self.args.summary {
-                self.successful_syscall.push(syscall_id);
-            }
-            *on_syscall_end = false;
+    pub fn write_syscall(&mut self, info: SyscallInfo) -> anyhow::Result<()> {
+        info.pid.write(&mut self.output, self.use_colors)?;
+        if self.args.syscall_number {
+            write!(self.output, " {:>3}", info.sys_no.id())?;
         }
-        Ok(())
+        write!(self.output, " ")?;
+        info.syscall_name.write(&mut self.output, self.use_colors)?;
+        write!(self.output, "(")?;
+        // print comma separated args vector
+        for (idx, arg) in info.args.iter().enumerate() {
+            if idx > 0 {
+                write!(self.output, ", ")?;
+            }
+            arg.write(&mut self.output, self.string_limit)?;
+        }
+        write!(self.output, ") = ")?;
+        info.result.write(&mut self.output, self.use_colors)?;
+        if self.args.syscall_times {
+            write!(self.output, " <{:.6}>", info.duration.as_millis())?;
+        }
+        Ok(writeln!(self.output)?)
     }
 
     fn report_summary(&mut self) -> Result<()> {
@@ -234,7 +227,7 @@ impl Tracer {
 
         // TODO: this needs to be reworked
         //       possibly use an array-based indexing instead of ever-growing vectors
-        let total_elapsed_time: u128 = self.system_call_timer_stop.values().sum();
+        let total_elapsed_time: Duration = self.system_call_timer_stop.values().sum();
         let syscall_map = count_element_function(&self.successful_syscall);
         let mut syscall_sorted: Vec<_> = syscall_map.iter().collect();
         syscall_sorted.sort_by_key(|v| v.0);
@@ -247,12 +240,13 @@ impl Tracer {
             let mut percent_time = 0f32;
             let stop_time = self.system_call_timer_stop.get(key);
             let (seconds, calls) = if let Some(v) = stop_time {
-                if total_elapsed_time != 0 {
-                    percent_time = *v as f32 / (total_elapsed_time as f32 / 100f32);
+                let call_time_ms = v.as_millis() as f32;
+                if !total_elapsed_time.is_zero() {
+                    percent_time = call_time_ms / (total_elapsed_time.as_millis() as f32 / 100f32);
                 }
                 (
-                    *v as f32 / 1000f32,
-                    (*v as f32 / 1000f32) / (*value as f32) * 1_000_000_f32,
+                    call_time_ms / 1000f32,
+                    (call_time_ms / 1000f32) / (*value as f32) * 1_000_000_f32,
                 )
             } else {
                 (0.0, 0.0)
@@ -271,7 +265,7 @@ impl Tracer {
                 Cell::new(format!("{calls:.0}",)),
                 Cell::new(value),
                 Cell::new(errors),
-                Cell::new(SYSTEM_CALLS[**key].0),
+                Cell::new(key.name()),
             ]);
         }
 
@@ -286,192 +280,24 @@ impl Tracer {
             "----------------",
         ]);
 
-        let seconds = total_elapsed_time as f32 / 1000_f32;
-        let usecs_call =
-            (total_elapsed_time as f32 / self.successful_syscall.len() as f32) * 1000_f32;
+        let seconds = total_elapsed_time.as_millis() as f32 / 1000_f32;
+        let usecs_call = (total_elapsed_time.as_millis() as f32
+            / self.successful_syscall.len() as f32)
+            * 1000_f32;
         table.add_row(vec![
             Cell::new("100.00"),
             Cell::new(format!("{seconds:.6}")),
             Cell::new(format!("{usecs_call:.0}",)),
-            Cell::new(total_elapsed_time.to_string()),
+            Cell::new(total_elapsed_time.as_millis().to_string()),
             Cell::new(failed_syscall_count.to_string()),
             Cell::new("total"),
         ]);
 
         if !self.args.summary_only {
             // separate a list of syscalls from the summary table
-            writeln!(&mut self.output_file)?;
+            writeln!(&mut self.output)?;
         }
-        writeln!(&mut self.output_file, "{table}")?;
-
-        Ok(())
-    }
-
-    fn read_string(&self, address: c_ulonglong) -> String {
-        let mut string = String::new();
-        // Move 8 bytes up each time for next read.
-        let mut count = 0;
-        let word_size = 8;
-
-        'done: loop {
-            let address = unsafe { (address as *mut c_void).offset(count) };
-
-            let res: c_long = match ptrace::read(self.child, address) {
-                Ok(c_long) => c_long,
-                Err(_) => break 'done,
-            };
-
-            let mut bytes: Vec<u8> = vec![];
-            bytes.write_i64::<LittleEndian>(res).unwrap_or_else(|err| {
-                panic!("Failed to write {res} as i64 LittleEndian: {err}");
-            });
-            for b in bytes {
-                if b == 0 {
-                    break 'done;
-                }
-                string.push(b as char);
-            }
-
-            count += word_size;
-        }
-
-        string
-    }
-
-    fn args_to_json_vec(
-        &mut self,
-        registers: user_regs_struct,
-        syscall_args: &[Option<SystemCallArgumentType>],
-    ) -> Vec<Value> {
-        syscall_args
-            .iter()
-            .filter_map(Option::as_ref)
-            .enumerate()
-            .map(|(idx, arg)| (arg, syscalls_i64::get_arg_value(registers, idx)))
-            .map(|(arg, value)| match arg {
-                Int => value.into(),
-                Str => self.read_string(value).into(),
-                Addr => {
-                    if value == 0 {
-                        Value::Null
-                    } else {
-                        format!("{value:#x}").into()
-                    }
-                }
-            })
-            .collect()
-    }
-
-    pub fn if_print_syscall(&self, ret_code: &RetCode) -> bool {
-        let cfg = &self.args;
-        if self.args.summary_only {
-            false
-        } else {
-            let allow_all = !cfg.failed_only && !cfg.successful_only;
-            match ret_code {
-                RetCode::Success(_) | RetCode::Address(_) => allow_all || cfg.successful_only,
-                RetCode::Error(_) => allow_all || cfg.failed_only,
-            }
-        }
-    }
-
-    fn trim_str(&self, string: String) -> String {
-        if self.args.no_abbrev {
-            string
-        } else {
-            let limit = self.args.string_limit.unwrap_or(STRING_LIMIT);
-            match string.chars().as_str().get(..limit) {
-                None => string,
-                Some(s) => format!("{s}..."),
-            }
-        }
-    }
-
-    fn report_syscall(
-        &mut self,
-        ret_code: &RetCode,
-        elapsed: u128,
-        syscall_id: usize,
-        registers: user_regs_struct,
-    ) -> Result<()> {
-        if !self.if_print_syscall(ret_code) {
-            return Ok(());
-        }
-
-        let (syscall, syscall_args) = &SYSTEM_CALLS[syscall_id];
-
-        if self.args.json {
-            let json = json!({
-                "syscall": syscall,
-                "args": self.args_to_json_vec(registers, syscall_args),
-                "result": ret_code.to_string(),
-                "pid": self.child.as_raw().to_string(),
-                "type": "SYSCALL"
-            });
-            writeln!(&mut self.output_file, "{json}")?;
-            return Ok(());
-        }
-
-        let mut buff = String::new();
-        buff.push('[');
-        let child = self.child.as_raw();
-        if self.use_colors {
-            let child = Blue.bold().paint(child.to_string()).to_string();
-            buff.push_str(&child);
-        } else {
-            buff.push_str(&child.to_string());
-        }
-        buff.push_str("] ");
-        if self.args.syscall_number {
-            let _ = write!(buff, "{syscall_id:>3} ");
-        }
-        let syscall = SYSTEM_CALLS[syscall_id].0;
-        if self.use_colors {
-            #[allow(clippy::unnecessary_to_owned)]
-            buff.push_str(&Style::new().bold().paint(syscall).to_string());
-        } else {
-            buff.push_str(syscall);
-        }
-        buff.push('(');
-        for (idx, arg) in syscall_args.iter().enumerate() {
-            if let Some(arg) = arg {
-                let value = syscalls_i64::get_arg_value(registers, idx);
-                if idx > 0 {
-                    buff.push_str(", ");
-                }
-                match arg {
-                    Int => buff.push_str(&value.to_string()),
-                    Str => {
-                        // Use JSON string escaping
-                        let s: Value = self.trim_str(self.read_string(value)).into();
-                        buff.push_str(&s.to_string());
-                    }
-                    Addr => {
-                        if value == 0 {
-                            buff.push_str("NULL");
-                        } else {
-                            let _ = write!(buff, "{value:#x}");
-                        }
-                    }
-                }
-            }
-        }
-        buff.push_str(") = ");
-        if self.use_colors {
-            let style = match ret_code {
-                RetCode::Success(_) => Green.bold(),
-                RetCode::Error(_) => Red.bold(),
-                RetCode::Address(_) => Yellow.bold(),
-            };
-            #[allow(clippy::unnecessary_to_owned)]
-            buff.push_str(&style.paint(ret_code.to_string()).to_string());
-        } else {
-            buff.push_str(&ret_code.to_string());
-        }
-        if self.args.syscall_times {
-            let _ = write!(buff, " <{elapsed:.6}>");
-        }
-        writeln!(self.output_file, "{buff}")?;
+        writeln!(&mut self.output, "{table}")?;
 
         Ok(())
     }
