@@ -16,14 +16,10 @@ use syscalls::Sysno;
 pub struct SyscallInfo {
     #[serde(rename = "type")]
     pub typ: &'static str,
-
-    #[serde(flatten)]
     pub pid: ProcessId,
-
+    #[serde(rename = "num")]
     pub sys_no: Sysno,
-
-    #[serde(flatten)]
-    pub syscall_name: SyscallName,
+    pub syscall: SyscallName,
 
     #[serde(serialize_with = "SyscallInfo::serialize_args")]
     pub args: Vec<SyscallArg>,
@@ -31,6 +27,7 @@ pub struct SyscallInfo {
     #[serde(flatten)]
     pub result: RetCode,
 
+    #[serde(serialize_with = "SyscallInfo::serialize_duration")]
     pub duration: Duration,
 }
 
@@ -46,7 +43,7 @@ impl SyscallInfo {
             typ: "SYSCALL",
             pid: ProcessId(pid),
             sys_no,
-            syscall_name: SyscallName(sys_no),
+            syscall: SyscallName(sys_no),
             args: SYSCALLS[sys_no.id() as usize]
                 .1
                 .iter()
@@ -79,12 +76,22 @@ impl SyscallInfo {
         }
         seq.end()
     }
+
+    fn serialize_duration<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_f64(duration.as_secs_f64())
+    }
 }
 
 #[derive(Debug, Copy, Clone, Serialize)]
 pub enum RetCode {
+    #[serde(rename = "success")]
     Ok(i32),
+    #[serde(rename = "error")]
     Err(i32),
+    #[serde(rename = "result")]
     Address(usize),
 }
 
@@ -181,7 +188,7 @@ impl ProcessId {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct SyscallName(Sysno);
 
 impl SyscallName {
@@ -191,6 +198,12 @@ impl SyscallName {
         } else {
             write!(f, "{}", self.0)
         }
+    }
+}
+
+impl Serialize for SyscallName {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.to_string().serialize(serializer)
     }
 }
 

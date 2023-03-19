@@ -190,7 +190,7 @@ impl Tracer {
             write!(self.output, " {:>3}", info.sys_no.id())?;
         }
         write!(self.output, " ")?;
-        info.syscall_name.write(&mut self.output, self.use_colors)?;
+        info.syscall.write(&mut self.output, self.use_colors)?;
         write!(self.output, "(")?;
         // print comma separated args vector
         for (idx, arg) in info.args.iter().enumerate() {
