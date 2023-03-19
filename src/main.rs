@@ -139,7 +139,7 @@ impl Tracer {
                 || sys_no == Sysno::execve
                 || sys_no == Sysno::exit_group
             {
-                let ret_code = RetCode::new(registers.rax);
+                let ret_code = RetCode::from_raw(registers.rax);
                 if self.filter.matches(sys_no, ret_code) {
                     // Measure system call execution time
                     let elapsed = if let Some(start_time) = syscall_start_time {
@@ -161,7 +161,13 @@ impl Tracer {
                         let json = serde_json::to_string(&info)?;
                         writeln!(&mut self.output, "{json}")?;
                     } else {
-                        self.write_syscall(info)?;
+                        info.write_syscall(
+                            self.use_colors,
+                            self.string_limit,
+                            self.args.syscall_number,
+                            self.args.syscall_times,
+                            &mut self.output,
+                        )?;
                     }
                 }
                 syscall_start_time = None;
@@ -182,29 +188,6 @@ impl Tracer {
         }
 
         Ok(())
-    }
-
-    pub fn write_syscall(&mut self, info: SyscallInfo) -> anyhow::Result<()> {
-        info.pid.write(&mut self.output, self.use_colors)?;
-        if self.args.syscall_number {
-            write!(self.output, " {:>3}", info.sys_no.id())?;
-        }
-        write!(self.output, " ")?;
-        info.syscall.write(&mut self.output, self.use_colors)?;
-        write!(self.output, "(")?;
-        // print comma separated args vector
-        for (idx, arg) in info.args.iter().enumerate() {
-            if idx > 0 {
-                write!(self.output, ", ")?;
-            }
-            arg.write(&mut self.output, self.string_limit)?;
-        }
-        write!(self.output, ") = ")?;
-        info.result.write(&mut self.output, self.use_colors)?;
-        if self.args.syscall_times {
-            write!(self.output, " <{:.6}>", info.duration.as_millis())?;
-        }
-        Ok(writeln!(self.output)?)
     }
 
     fn report_summary(&mut self) -> Result<()> {
