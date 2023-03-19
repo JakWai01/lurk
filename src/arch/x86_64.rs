@@ -17,8 +17,6 @@ pub enum SyscallArgType {
     Addr,
 }
 
-// TODO: these numbers are ridiculously hard to maintain, and should be replaced with constants
-
 pub static TRACE_DESC: SysnoSet = SysnoSet::new(&[
     read,
     write,

@@ -1,4 +1,4 @@
-use crate::syscalls_i64::{get_arg_value, read_string, SyscallArgType, SYSCALLS};
+use crate::arch::{get_arg_value, read_string, SyscallArgType, SYSCALLS};
 use ansi_term::Color::{Blue, Green, Red, Yellow};
 use ansi_term::Style;
 use libc::{c_ulonglong, user_regs_struct};

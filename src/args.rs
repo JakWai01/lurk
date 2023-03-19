@@ -1,9 +1,9 @@
-use crate::syscall_info::RetCode;
-use crate::syscalls_i64::{
+use crate::arch::{
     TRACE_CLOCK, TRACE_CREDS, TRACE_DESC, TRACE_FILE, TRACE_FSTAT, TRACE_FSTATFS, TRACE_IPC,
     TRACE_LSTAT, TRACE_MEMORY, TRACE_NETWORK, TRACE_PROCESS, TRACE_PURE, TRACE_SIGNAL, TRACE_STAT,
     TRACE_STATFS, TRACE_STATFS_LIKE, TRACE_STAT_LIKE,
 };
+use crate::syscall_info::RetCode;
 use anyhow::bail;
 use clap::Parser;
 use libc::pid_t;

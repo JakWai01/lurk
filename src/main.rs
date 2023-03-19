@@ -10,13 +10,13 @@
     clippy::struct_excessive_bools,
 )]
 
+mod arch;
 mod args;
 mod syscall_info;
-mod syscalls_i64;
 
+use crate::arch::enable_follow_forks;
 use crate::args::{Args, Filter};
 use crate::syscall_info::{RetCode, SyscallInfo};
-use crate::syscalls_i64::enable_follow_forks;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use comfy_table::modifiers::UTF8_ROUND_CORNERS;
