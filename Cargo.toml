@@ -10,13 +10,41 @@ license = "MIT OR Apache-2.0"
 name = "lurk"
 path = "src/main.rs"
 
+[features]
+default = []
+
+# Includes the syscall tables for all architectures.
+all = [
+#    "aarch64", "arm", "mips", "mips64", "powerpc", "powerpc64", "s390x",
+#    "sparc", "sparc64", "x86",
+    "x86_64"
+]
+
+# Enable syscall tables for individual architectures.
+#aarch64 = []
+#arm = []
+#mips = []
+#mips64 = []
+#powerpc = []
+#powerpc64 = []
+#s390x = []
+#sparc = []
+#sparc64 = []
+#x86 = []
+x86_64 = []
+
 [dependencies]
 ansi_term = "0.12"
+anyhow = "1"
+atty = "0.2"
 byteorder = "1"
 clap = { version = "4", features = ["derive"] }
+comfy-table = "6"
 libc = "0.2"
 linux-personality = "1"
 nix = "0.26"
 regex = "1"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+syscalls = { version = "0.6", features = ["full"] }
 users = "0.11"
