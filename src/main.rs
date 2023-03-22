@@ -14,64 +14,69 @@ mod arch;
 mod args;
 mod syscall_info;
 
-use crate::arch::enable_follow_forks;
-use crate::args::{Args, Filter};
-use crate::syscall_info::{RetCode, SyscallInfo};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use comfy_table::modifiers::UTF8_ROUND_CORNERS;
 use comfy_table::presets::UTF8_BORDERS_ONLY;
 use comfy_table::CellAlignment::Right;
-use comfy_table::{Cell, ContentArrangement, Table};
+use comfy_table::{Cell, ContentArrangement, Row, Table};
 use linux_personality::{personality, ADDR_NO_RANDOMIZE};
 use nix::sys::ptrace;
 use nix::sys::wait::wait;
 use nix::unistd::{fork, ForkResult, Pid};
-use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
-use syscalls::Sysno;
+use syscalls::{Sysno, SysnoMap, SysnoSet};
 use users::get_user_by_name;
+
+use crate::arch::enable_follow_forks;
+use crate::args::{ArgCommand, Args, Filter};
+use crate::syscall_info::{RetCode, SyscallInfo};
 
 const STRING_LIMIT: usize = 32;
 
 fn main() -> Result<()> {
     let config = Args::parse();
-    // Check whether to attach to an existing process or create a new one
-    if let Some(pid) = config.attach {
-        ptrace::attach(Pid::from_raw(pid))
-            .with_context(|| format!("Failed to ptrace attach to process {pid}"))?;
-        Tracer::new(Pid::from_raw(pid), config)?.run_tracer()?;
-    } else {
-        match unsafe { fork() } {
-            Ok(ForkResult::Child) => run_tracee(config)?,
-            Ok(ForkResult::Parent { child }) => Tracer::new(child, config)?.run_tracer()?,
-            Err(err) => panic!("[main] fork() failed: {err}"),
+
+    let pid = match &config.command {
+        ArgCommand::Attach(pid) => {
+            let pid = Pid::from_raw(pid.attach);
+            ptrace::attach(pid).with_context(|| format!("Unable to attach to process {pid}"))?;
+            pid
         }
-    }
-    Ok(())
+
+        // FIXME: I suspect this breaks Rust's safety: fork() spawn a thread and that thread
+        //        is accessing the same memory as the parent thread (command/env/username/config)
+        ArgCommand::Command(command) => match unsafe { fork() } {
+            Ok(ForkResult::Child) => return run_tracee(command, &config.env, &config.username),
+            Ok(ForkResult::Parent { child }) => child,
+            Err(err) => bail!("fork() failed: {err}"),
+        },
+    };
+
+    Tracer::new(pid, config)?.run_tracer()
 }
 
 struct Tracer {
-    child: Pid,
+    pid: Pid,
     args: Args,
     string_limit: Option<usize>,
     filter: Filter,
-    system_call_timer_stop: HashMap<Sysno, Duration>,
-    successful_syscall: Vec<Sysno>,
-    failed_syscall: Vec<Sysno>,
+    syscalls_time: SysnoMap<Duration>,
+    syscalls_pass: SysnoMap<u64>,
+    syscalls_fail: SysnoMap<u64>,
     use_colors: bool,
     output: Box<dyn Write>,
 }
 
 impl Tracer {
-    fn new(child: Pid, args: Args) -> Result<Self> {
+    fn new(pid: Pid, args: Args) -> Result<Self> {
         // TODO: we may also add a --color option to force colors, and a --no-color option to disable it
         let use_colors;
-        let output_file: Box<dyn Write> = if let Some(filepath) = &args.file {
+        let output: Box<dyn Write> = if let Some(filepath) = &args.file {
             use_colors = false;
             Box::new(BufWriter::new(
                 OpenOptions::new()
@@ -85,7 +90,7 @@ impl Tracer {
         };
 
         Ok(Self {
-            child,
+            pid,
             filter: args.create_filter()?,
             string_limit: if args.no_abbrev {
                 None
@@ -93,11 +98,11 @@ impl Tracer {
                 Some(args.string_limit.unwrap_or(STRING_LIMIT))
             },
             args,
-            system_call_timer_stop: HashMap::new(),
-            successful_syscall: vec![],
-            failed_syscall: vec![],
+            syscalls_time: SysnoMap::init(SysnoSet::all(), Duration::default()),
+            syscalls_pass: SysnoMap::init(SysnoSet::all(), 0),
+            syscalls_fail: SysnoMap::init(SysnoSet::all(), 0),
             use_colors,
-            output: output_file,
+            output,
         })
     }
 
@@ -115,11 +120,11 @@ impl Tracer {
             // TODO: move this out of the loop if possible, or explain why can't
             if follow_forks {
                 follow_forks = false;
-                enable_follow_forks(self.child)?;
+                enable_follow_forks(self.pid)?;
             }
 
-            let Ok(registers) = ptrace::getregs(self.child) else {
-                break ;
+            let Ok(registers) = ptrace::getregs(self.pid) else {
+                break
             };
 
             // FIXME: what is 336??? The highest syscall we have is rseq = 334
@@ -133,57 +138,69 @@ impl Tracer {
 
             // ptrace gets invoked twice per system call: once before and once after execution
             // only print output at second ptrace invocation
-            // TODO: explain why these two syscalls should be handled differently
+            // TODO: explain why these two syscalls should be handled differently?
             // TODO: should we handle if two subsequent syscalls are NOT the same?
             if syscall_start_time.is_some()
                 || sys_no == Sysno::execve
                 || sys_no == Sysno::exit_group
             {
                 let ret_code = RetCode::from_raw(registers.rax);
+                let collection = if let RetCode::Err(_) = ret_code {
+                    &mut self.syscalls_fail
+                } else {
+                    &mut self.syscalls_pass
+                };
+
+                if let Some(v) = collection.get_mut(sys_no) {
+                    *v += 1;
+                }
+
                 if self.filter.matches(sys_no, ret_code) {
                     // Measure system call execution time
                     let elapsed = if let Some(start_time) = syscall_start_time {
                         let elapsed = SystemTime::now()
                             .duration_since(start_time)
                             .unwrap_or_default();
-                        self.system_call_timer_stop
-                            .entry(sys_no)
-                            .and_modify(|v| *v += elapsed)
-                            .or_insert(elapsed);
+                        if let Some(v) = self.syscalls_time.get_mut(sys_no) {
+                            *v += elapsed;
+                        }
                         elapsed
                     } else {
                         Duration::default()
                     };
 
-                    // TODO: if we follow forks, we should also capture/print the pid of the child process
-                    let info = SyscallInfo::new(self.child, sys_no, ret_code, registers, elapsed);
-                    if self.args.json {
-                        let json = serde_json::to_string(&info)?;
-                        writeln!(&mut self.output, "{json}")?;
-                    } else {
-                        info.write_syscall(
-                            self.use_colors,
-                            self.string_limit,
-                            self.args.syscall_number,
-                            self.args.syscall_times,
-                            &mut self.output,
-                        )?;
+                    if !self.args.summary_only {
+                        // TODO: if we follow forks, we should also capture/print the pid of the child process
+                        let info = SyscallInfo::new(self.pid, sys_no, ret_code, registers, elapsed);
+                        if self.args.json {
+                            let json = serde_json::to_string(&info)?;
+                            writeln!(&mut self.output, "{json}")?;
+                        } else {
+                            info.write_syscall(
+                                self.use_colors,
+                                self.string_limit,
+                                self.args.syscall_number,
+                                self.args.syscall_times,
+                                &mut self.output,
+                            )?;
+                        }
                     }
                 }
                 syscall_start_time = None;
-                if self.args.summary_only || self.args.summary {
-                    self.successful_syscall.push(sys_no);
-                }
             } else {
                 syscall_start_time = Some(SystemTime::now());
             }
 
-            if ptrace::syscall(self.child, None).is_err() {
+            if ptrace::syscall(self.pid, None).is_err() {
                 break;
             }
         }
 
         if !self.args.json && (self.args.summary_only || self.args.summary) {
+            if !self.args.summary_only {
+                // Make a gap between the last syscall and the summary
+                writeln!(&mut self.output)?;
+            }
             self.report_summary()?;
         }
 
@@ -191,93 +208,82 @@ impl Tracer {
     }
 
     fn report_summary(&mut self) -> Result<()> {
+        let headers = vec!["% time", "time", "time/call", "calls", "errors", "syscall"];
         let mut table = Table::new();
         table
             .load_preset(UTF8_BORDERS_ONLY)
             .apply_modifier(UTF8_ROUND_CORNERS)
             .set_content_arrangement(ContentArrangement::Dynamic)
-            .set_header(vec![
-                "% time",
-                "seconds",
-                "usecs/call",
-                "calls",
-                "errors",
-                "syscall",
-            ]);
-        for i in 0..5 {
+            .set_header(&headers);
+        for i in 0..headers.len() {
             table.column_mut(i).unwrap().set_cell_alignment(Right);
         }
 
-        // TODO: this needs to be reworked
-        //       possibly use an array-based indexing instead of ever-growing vectors
-        let total_elapsed_time: Duration = self.system_call_timer_stop.values().sum();
-        let syscall_map = count_element_function(&self.successful_syscall);
-        let mut syscall_sorted: Vec<_> = syscall_map.iter().collect();
-        syscall_sorted.sort_by_key(|v| v.0);
+        let mut sorted_sysno: Vec<_> = self.filter.all_enabled().iter().collect();
+        sorted_sysno.sort_by_key(|k| k.name());
+        let t_time: Duration = self.syscalls_time.values().sum();
 
-        let error_map = count_element_function(&self.failed_syscall);
-        let mut failed_syscall_count = 0;
+        for sysno in sorted_sysno {
+            let (Some(pass), Some(fail), Some(time)) = (
+                self.syscalls_pass.get(sysno),
+                self.syscalls_fail.get(sysno),
+                self.syscalls_time.get(sysno),
+            ) else { continue };
 
-        // Construct summary columns
-        for (key, value) in syscall_sorted {
-            let mut percent_time = 0f32;
-            let stop_time = self.system_call_timer_stop.get(key);
-            let (seconds, calls) = if let Some(v) = stop_time {
-                let call_time_ms = v.as_millis() as f32;
-                if !total_elapsed_time.is_zero() {
-                    percent_time = call_time_ms / (total_elapsed_time.as_millis() as f32 / 100f32);
-                }
-                (
-                    call_time_ms / 1000f32,
-                    (call_time_ms / 1000f32) / (*value as f32) * 1_000_000_f32,
-                )
+            let calls = pass + fail;
+            if calls == 0 {
+                continue;
+            }
+
+            let time_percent = if !t_time.is_zero() {
+                time.as_secs_f32() / t_time.as_secs_f32() * 100f32
             } else {
-                (0.0, 0.0)
-            };
-
-            let errors = if let Some(i) = error_map.get(key) {
-                failed_syscall_count += i;
-                i.to_string()
-            } else {
-                String::new()
+                0f32
             };
 
             table.add_row(vec![
-                Cell::new(format!("{percent_time:.2}")),
-                Cell::new(format!("{seconds:.6}",)),
-                Cell::new(format!("{calls:.0}",)),
-                Cell::new(value),
-                Cell::new(errors),
-                Cell::new(key.name()),
+                Cell::new(&format!("{time_percent:.1}%")),
+                Cell::new(&format!("{}µs", time.as_micros())),
+                Cell::new(&format!("{:.1}ns", time.as_nanos() as f64 / calls as f64)),
+                Cell::new(&format!("{calls}")),
+                Cell::new(&format!("{fail}")),
+                Cell::new(sysno.name()),
             ]);
         }
 
-        // FIXME: this is a hack to add a line between the table and the summary
-        //        https://github.com/Nukesor/comfy-table/issues/104
-        table.add_row(vec![
-            "------",
-            "-----------",
-            "-----------",
-            "---------",
-            "---------",
-            "----------------",
-        ]);
-
-        let seconds = total_elapsed_time.as_millis() as f32 / 1000_f32;
-        let usecs_call = (total_elapsed_time.as_millis() as f32
-            / self.successful_syscall.len() as f32)
-            * 1000_f32;
-        table.add_row(vec![
-            Cell::new("100.00"),
-            Cell::new(format!("{seconds:.6}")),
-            Cell::new(format!("{usecs_call:.0}",)),
-            Cell::new(total_elapsed_time.as_millis().to_string()),
-            Cell::new(failed_syscall_count.to_string()),
+        // Create the totals row, but don't add it to the table yet
+        let failed = self.syscalls_fail.values().sum::<u64>();
+        let calls: u64 = self.syscalls_pass.values().sum::<u64>() + failed;
+        let totals: Row = vec![
+            Cell::new("100%"),
+            Cell::new(format!("{}µs", t_time.as_micros())),
+            Cell::new(format!("{:.1}ns", t_time.as_nanos() as f64 / calls as f64)),
+            Cell::new(calls),
+            Cell::new(failed.to_string()),
             Cell::new("total"),
-        ]);
+        ]
+        .into();
+
+        // TODO: consider using another table-creating crate
+        //       https://github.com/Nukesor/comfy-table/issues/104
+        // This is a hack to add a line between the table and the summary,
+        // computing max column width of each existing row plus the totals row
+        let divider_row: Vec<String> = table
+            .column_max_content_widths()
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(idx, val)| {
+                let cell_at_idx = totals.cell_iter().take(idx + 1).last().unwrap();
+                (val as usize).max(cell_at_idx.content().len())
+            })
+            .map(|v| str::repeat("-", v))
+            .collect();
+        table.add_row(divider_row);
+        table.add_row(totals);
 
         if !self.args.summary_only {
-            // separate a list of syscalls from the summary table
+            // separate a list of syscalls from the summary table with an blank line
             writeln!(&mut self.output)?;
         }
         writeln!(&mut self.output, "{table}")?;
@@ -286,26 +292,14 @@ impl Tracer {
     }
 }
 
-fn run_tracee(config: Args) -> Result<()> {
-    let mut args: Vec<String> = Vec::new();
-    let mut program = String::new();
-
+fn run_tracee(command: &[String], envs: &[String], username: &Option<String>) -> Result<()> {
     ptrace::traceme()?;
     personality(ADDR_NO_RANDOMIZE).map_err(|_| anyhow!("Unable to set ADDR_NO_RANDOMIZE"))?;
 
-    // Handle arguments passed to the program to be traced
-    for (index, arg) in config.command.iter().enumerate() {
-        if index == 0 {
-            program = arg.to_string();
-        } else {
-            args.push(String::from(arg));
-        }
-    }
+    let mut cmd = Command::new(command.get(0).ok_or_else(|| anyhow!("No command"))?);
+    cmd.args(command[1..].iter()).stdout(Stdio::null());
 
-    let mut cmd = Command::new(program);
-    cmd.args(args).stdout(Stdio::null());
-    // Add and remove environment variables to/from the environment
-    for token in config.env {
+    for token in envs {
         let mut parts = token.splitn(2, '=');
         match (parts.next(), parts.next()) {
             (Some(key), Some(value)) => cmd.env(key, value),
@@ -314,22 +308,13 @@ fn run_tracee(config: Args) -> Result<()> {
         };
     }
 
-    if let Some(user) = get_user_by_name(&config.username.unwrap_or_default()) {
-        cmd.uid(user.uid());
+    if let Some(username) = username {
+        if let Some(user) = get_user_by_name(username) {
+            cmd.uid(user.uid());
+        }
     }
 
     cmd.exec();
 
     Ok(())
-}
-
-fn count_element_function<I>(it: I) -> HashMap<I::Item, usize>
-where
-    I: IntoIterator,
-    I::Item: Eq + core::hash::Hash,
-{
-    it.into_iter().fold(HashMap::new(), |mut acc, x| {
-        *acc.entry(x).or_insert(0) += 1;
-        acc
-    })
 }

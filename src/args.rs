@@ -5,7 +5,7 @@ use crate::arch::{
 };
 use crate::syscall_info::RetCode;
 use anyhow::bail;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use libc::pid_t;
 use regex::Regex;
 use std::collections::HashMap;
@@ -13,15 +13,12 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use syscalls::{Sysno, SysnoSet};
 
-#[derive(Parser, Debug, Clone, PartialEq, Default)]
-#[command(name = "lurk", about, version)]
+#[derive(Parser, Debug)]
+#[command(name = "lurk", about, version, allow_external_subcommands = true)]
 pub struct Args {
     /// Display system call numbers
     #[arg(short = 'n', long)]
     pub syscall_number: bool,
-    /// Attach to a running process
-    #[arg(short = 'p', long)]
-    pub attach: Option<pid_t>,
     /// Print un-abbreviated versions of strings
     #[arg(short = 'v', long)]
     pub no_abbrev: bool,
@@ -61,9 +58,23 @@ pub struct Args {
     /// Display output in JSON format
     #[arg(short, long)]
     pub json: bool,
+    #[command(subcommand)]
+    pub command: ArgCommand,
+}
+
+#[derive(Subcommand, Debug, PartialEq)]
+pub enum ArgCommand {
+    Attach(ArgAttach),
     /// Trace command
-    #[arg(required_unless_present = "attach")]
-    pub command: Vec<String>,
+    #[command(external_subcommand)]
+    Command(Vec<String>),
+}
+
+#[derive(Parser, Debug, PartialEq)]
+pub struct ArgAttach {
+    /// Attach to a running process with the given pid.
+    #[arg(short = 'p', long)]
+    pub attach: pid_t,
 }
 
 impl Args {
@@ -89,7 +100,7 @@ impl Args {
                         if let Some(part) = part.strip_prefix('/') {
                             // The '/' prefix followed by a regex pattern to match system calls
                             if let Ok(pattern) = Regex::new(part) {
-                                for (syscall, sysno) in all_syscall_names.iter() {
+                                for (syscall, sysno) in &all_syscall_names {
                                     if pattern.is_match(syscall) {
                                         system_calls.insert(*sysno);
                                     }
@@ -190,5 +201,24 @@ impl Filter {
                 FilterSysno::Except(sysno_set) => !sysno_set.contains(sys_no),
             }
         )
+    }
+
+    pub fn all_enabled(&self) -> SysnoSet {
+        match &self.sysno_filter {
+            FilterSysno::All => SysnoSet::all(),
+            FilterSysno::Only(sysno_set) => sysno_set.clone(),
+            FilterSysno::Except(sysno_set) => SysnoSet::all().difference(sysno_set),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_args_simple() {
+        let args = Args::parse_from(&["lurk", "app"]);
+        assert_eq!(args.command, ArgCommand::Command(vec!["app".to_string()]));
     }
 }
