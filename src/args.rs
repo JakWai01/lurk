@@ -19,6 +19,9 @@ pub struct Args {
     /// Display system call numbers
     #[arg(short = 'n', long)]
     pub syscall_number: bool,
+    /// Attach to a running process
+    #[arg(short = 'p', long)]
+    pub attach: Option<pid_t>,
     /// Print un-abbreviated versions of strings
     #[arg(short = 'v', long)]
     pub no_abbrev: bool,
@@ -59,12 +62,14 @@ pub struct Args {
     #[arg(short, long)]
     pub json: bool,
     #[command(subcommand)]
-    pub command: ArgCommand,
+    pub command: Option<ArgCommand>,
 }
+
+// The command/subcommand is a bit hacky, but gets the job done:
+// https://github.com/clap-rs/clap/discussions/4560#discussioncomment-5392780
 
 #[derive(Subcommand, Debug, PartialEq)]
 pub enum ArgCommand {
-    Attach(ArgAttach),
     /// Trace command
     #[command(external_subcommand)]
     Command(Vec<String>),

@@ -15,7 +15,7 @@ mod args;
 mod syscall_info;
 
 use anyhow::{anyhow, bail, Context, Result};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use comfy_table::modifiers::UTF8_ROUND_CORNERS;
 use comfy_table::presets::UTF8_BORDERS_ONLY;
 use comfy_table::CellAlignment::Right;
@@ -40,21 +40,28 @@ const STRING_LIMIT: usize = 32;
 
 fn main() -> Result<()> {
     let config = Args::parse();
-
-    let pid = match &config.command {
-        ArgCommand::Attach(pid) => {
-            let pid = Pid::from_raw(pid.attach);
-            ptrace::attach(pid).with_context(|| format!("Unable to attach to process {pid}"))?;
-            pid
+    let pid = if let Some(ArgCommand::Command(command)) = &config.command {
+        if command.is_empty() {
+            Args::command().print_help()?;
+            return Ok(());
         }
-
+        if config.attach.is_some() {
+            bail!("The -p/--attach option cannot be used with a command");
+        }
         // FIXME: I suspect this breaks Rust's safety: fork() spawn a thread and that thread
         //        is accessing the same memory as the parent thread (command/env/username/config)
-        ArgCommand::Command(command) => match unsafe { fork() } {
+        match unsafe { fork() } {
             Ok(ForkResult::Child) => return run_tracee(command, &config.env, &config.username),
             Ok(ForkResult::Parent { child }) => child,
             Err(err) => bail!("fork() failed: {err}"),
-        },
+        }
+    } else if let Some(pid) = config.attach {
+        let pid = Pid::from_raw(pid);
+        ptrace::attach(pid).with_context(|| format!("Unable to attach to process {pid}"))?;
+        pid
+    } else {
+        Args::command().print_help()?;
+        return Ok(());
     };
 
     Tracer::new(pid, config)?.run_tracer()
@@ -147,15 +154,11 @@ impl Tracer {
                 || sys_no == Sysno::exit_group
             {
                 let ret_code = RetCode::from_raw(registers.rax);
-                let collection = if let RetCode::Err(_) = ret_code {
-                    &mut self.syscalls_fail
+                if let RetCode::Err(_) = ret_code {
+                    self.syscalls_fail[sys_no] += 1
                 } else {
-                    &mut self.syscalls_pass
+                    self.syscalls_pass[sys_no] += 1
                 };
-
-                if let Some(v) = collection.get_mut(sys_no) {
-                    *v += 1;
-                }
 
                 if self.filter.matches(sys_no, ret_code) {
                     // Measure system call execution time
@@ -163,9 +166,7 @@ impl Tracer {
                         let elapsed = SystemTime::now()
                             .duration_since(start_time)
                             .unwrap_or_default();
-                        if let Some(v) = self.syscalls_time.get_mut(sys_no) {
-                            *v += elapsed;
-                        }
+                        self.syscalls_time[sys_no] += elapsed;
                         elapsed
                     } else {
                         Duration::default()
