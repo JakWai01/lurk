@@ -46,5 +46,5 @@ nix = "0.26"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-syscalls = { path = "../syscalls", version = "0.6", features = ["full"] }
+syscalls = { git = "https://github.com/jasonwhite/syscalls", branch = "main", version = "0.6", features = ["full"] }
 users = "0.11"

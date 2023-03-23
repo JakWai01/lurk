@@ -595,6 +595,7 @@ dependencies = [
 [[package]]
 name = "syscalls"
 version = "0.6.8"
+source = "git+https://github.com/jasonwhite/syscalls?branch=main#ac47b4603afeda0ad214b8e52421c8bc93d75540"
 dependencies = [
  "cc",
  "serde",

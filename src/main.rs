@@ -98,9 +98,11 @@ impl Tracer {
                 Some(args.string_limit.unwrap_or(STRING_LIMIT))
             },
             args,
-            syscalls_time: SysnoMap::init(SysnoSet::all(), Duration::default()),
-            syscalls_pass: SysnoMap::init(SysnoSet::all(), 0),
-            syscalls_fail: SysnoMap::init(SysnoSet::all(), 0),
+            syscalls_time: SysnoMap::from_iter(
+                SysnoSet::all().iter().map(|v| (v, Duration::default())),
+            ),
+            syscalls_pass: SysnoMap::from_iter(SysnoSet::all().iter().map(|v| (v, 0))),
+            syscalls_fail: SysnoMap::from_iter(SysnoSet::all().iter().map(|v| (v, 0))),
             use_colors,
             output,
         })
