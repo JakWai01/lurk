@@ -277,7 +277,7 @@ impl Tracer {
             .copied()
             .enumerate()
             .map(|(idx, val)| {
-                let cell_at_idx = totals.cell_iter().take(idx + 1).last().unwrap();
+                let cell_at_idx = totals.cell_iter().nth(idx).unwrap();
                 (val as usize).max(cell_at_idx.content().len())
             })
             .map(|v| str::repeat("-", v))
