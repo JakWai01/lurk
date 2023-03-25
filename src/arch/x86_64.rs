@@ -1,21 +1,10 @@
-use byteorder::{LittleEndian, WriteBytesExt};
-use libc::{c_long, c_ulonglong, c_void, user_regs_struct};
-use nix::sys::ptrace;
-use nix::sys::ptrace::Options;
-use nix::unistd::Pid;
+use crate::arch::SyscallArgType;
+use libc::{c_ulonglong, user_regs_struct};
 use syscalls::x86_64::Sysno;
-use syscalls::x86_64::Sysno::*;
 use syscalls::SysnoSet;
 
-#[derive(Debug, Copy, Clone)]
-pub enum SyscallArgType {
-    // Integer can be used to represent int, fd and size_t
-    Int,
-    // String can be used to represent *buf
-    Str,
-    // Address can be used to represent *statbuf
-    Addr,
-}
+#[allow(clippy::enum_glob_use)]
+use syscalls::x86_64::Sysno::*;
 
 pub static TRACE_DESC: SysnoSet = SysnoSet::new(&[
     read,
@@ -901,13 +890,6 @@ pub static SYSCALLS: [(Sysno, [Option<SyscallArgType>; 6]); 335] = [
     syscall!(rseq),
 ];
 
-pub fn enable_follow_forks(pid: Pid) -> nix::Result<()> {
-    ptrace::setoptions(
-        pid,
-        Options::PTRACE_O_TRACEFORK | Options::PTRACE_O_TRACEVFORK | Options::PTRACE_O_TRACECLONE,
-    )
-}
-
 pub fn get_arg_value(registers: user_regs_struct, i: usize) -> c_ulonglong {
     match i {
         0 => registers.rdi,
@@ -918,37 +900,6 @@ pub fn get_arg_value(registers: user_regs_struct, i: usize) -> c_ulonglong {
         5 => registers.r9,
         v => panic!("Invalid system call index {v}!"),
     }
-}
-
-pub fn read_string(pid: Pid, address: c_ulonglong) -> String {
-    let mut string = String::new();
-    // Move 8 bytes up each time for next read.
-    let mut count = 0;
-    let word_size = 8;
-
-    'done: loop {
-        let address = unsafe { (address as *mut c_void).offset(count) };
-
-        let res: c_long = match ptrace::read(pid, address) {
-            Ok(c_long) => c_long,
-            Err(_) => break 'done,
-        };
-
-        let mut bytes: Vec<u8> = vec![];
-        bytes.write_i64::<LittleEndian>(res).unwrap_or_else(|err| {
-            panic!("Failed to write {res} as i64 LittleEndian: {err}");
-        });
-        for b in bytes {
-            if b == 0 {
-                break 'done;
-            }
-            string.push(b as char);
-        }
-
-        count += word_size;
-    }
-
-    string
 }
 
 // test that all syscalls match their syscall number

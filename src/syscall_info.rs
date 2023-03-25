@@ -1,4 +1,4 @@
-use crate::arch::{get_arg_value, read_string, SyscallArgType, SYSCALLS};
+use crate::arch::parse_args;
 use ansi_term::Color::{Blue, Green, Red, Yellow};
 use ansi_term::Style;
 use libc::{c_ulonglong, user_regs_struct};
@@ -36,20 +36,7 @@ impl SyscallInfo {
             typ: "SYSCALL",
             pid,
             syscall,
-            args: SyscallArgs(
-                SYSCALLS[syscall.id() as usize]
-                    .1
-                    .iter()
-                    .filter_map(Option::as_ref)
-                    .enumerate()
-                    .map(|(idx, arg)| (arg, get_arg_value(registers, idx)))
-                    .map(|(arg, value)| match arg {
-                        SyscallArgType::Int => SyscallArg::Int(value as i128),
-                        SyscallArgType::Str => SyscallArg::Str(read_string(pid, value)),
-                        SyscallArgType::Addr => SyscallArg::Addr(value as usize),
-                    })
-                    .collect(),
-            ),
+            args: parse_args(pid, syscall, registers),
             result: ret_code,
             duration,
         }
@@ -173,7 +160,7 @@ impl Display for RetCode {
 
 #[derive(Debug, Serialize)]
 pub enum SyscallArg {
-    Int(i128),
+    Int(i64),
     Str(String),
     Addr(usize),
 }
