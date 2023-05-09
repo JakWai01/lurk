@@ -31,6 +31,11 @@ sudo install /tmp/lurk /usr/local/bin
 cargo install lurk-cli
 ```
 
+### Arch Linux
+```sh
+pacman -S lurk
+```
+
 ## Usage
 
 To get a quick overview, you can run `lurk --help`:
