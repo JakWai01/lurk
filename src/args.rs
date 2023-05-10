@@ -223,7 +223,10 @@ mod tests {
 
     #[test]
     fn test_args_simple() {
-        let args = Args::parse_from(&["lurk", "app"]);
-        assert_eq!(args.command, ArgCommand::Command(vec!["app".to_string()]));
+        let args = Args::parse_from(["lurk", "app"]);
+        assert_eq!(
+            args.command,
+            Some(ArgCommand::Command(vec!["app".to_string()])),
+        );
     }
 }
