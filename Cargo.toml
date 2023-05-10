@@ -1,6 +1,6 @@
 [package]
 name = "lurk-cli"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 authors = ["Jakob Waibel <mail@jakobwaibel.com>", "Yuri Astrakhan <YuriAstrakhan@gmail.com>"]
 description = "lurk is a pretty (simple) alternative to strace."
