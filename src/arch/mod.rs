@@ -94,27 +94,53 @@ pub fn read_string(pid: Pid, address: c_ulonglong) -> String {
     string
 }
 
-pub fn enable_follow_forks(pid: Pid) -> nix::Result<()> {
+pub fn ptrace_init_options(pid: Pid) -> nix::Result<()> {
     ptrace::setoptions(
         pid,
-        Options::PTRACE_O_TRACEFORK | Options::PTRACE_O_TRACEVFORK | Options::PTRACE_O_TRACECLONE,
+        Options::PTRACE_O_TRACESYSGOOD
+            | Options::PTRACE_O_TRACEEXIT
+            | Options::PTRACE_O_TRACEEXEC,
     )
 }
 
-pub fn parse_args(pid: Pid, syscall: Sysno, registers: user_regs_struct) -> SyscallArgs {
-    #[allow(clippy::cast_sign_loss)]
-    SyscallArgs(
-        SYSCALLS[syscall.id() as usize]
-            .1
-            .iter()
-            .filter_map(Option::as_ref)
-            .enumerate()
-            .map(|(idx, arg)| (arg, get_arg_value(registers, idx)))
-            .map(|(arg, value)| match arg {
-                SyscallArgType::Int => SyscallArg::Int(value as i64),
-                SyscallArgType::Str => SyscallArg::Str(read_string(pid, value)),
-                SyscallArgType::Addr => SyscallArg::Addr(value as usize),
-            })
-            .collect(),
+pub fn ptrace_init_options_fork(pid: Pid) -> nix::Result<()> {
+    ptrace::setoptions(
+        pid,
+        Options::PTRACE_O_TRACESYSGOOD
+            | Options::PTRACE_O_TRACEEXIT
+            | Options::PTRACE_O_TRACEEXEC
+            | Options::PTRACE_O_TRACEFORK
+            | Options::PTRACE_O_TRACEVFORK
+            | Options::PTRACE_O_TRACECLONE,
     )
+}
+
+#[allow(clippy::cast_sign_loss)]
+#[must_use]
+// SAFTEY: In get_register_data we make sure that the syscall number will never be negative.
+pub fn parse_args(pid: Pid, syscall: Sysno, registers: user_regs_struct) -> SyscallArgs {
+    SYSCALLS
+        .get(syscall.id() as usize)
+        .and_then(|option| option.as_ref())
+        .map_or_else(
+            || SyscallArgs(vec![]),
+            |(_, args)| {
+                SyscallArgs(
+                    args.iter()
+                        .filter_map(Option::as_ref)
+                        .enumerate()
+                        .map(|(idx, arg_type)| map_arg(pid, registers, idx, *arg_type))
+                        .collect(),
+                )
+            },
+        )
+}
+
+fn map_arg(pid: Pid, registers: user_regs_struct, idx: usize, arg: SyscallArgType) -> SyscallArg {
+    let value = get_arg_value(registers, idx);
+    match arg {
+        SyscallArgType::Int => SyscallArg::Int(value as i64),
+        SyscallArgType::Str => SyscallArg::Str(read_string(pid, value)),
+        SyscallArgType::Addr => SyscallArg::Addr(value as usize),
+    }
 }

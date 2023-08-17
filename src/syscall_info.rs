@@ -71,23 +71,27 @@ impl SyscallInfo {
             arg.write(output, string_limit)?;
         }
         write!(output, ") = ")?;
-        if use_colors {
-            let style = match self.result {
-                RetCode::Ok(_) => Green.bold(),
-                RetCode::Err(_) => Red.bold(),
-                RetCode::Address(_) => Yellow.bold(),
-            };
-            // TODO: it would be great if we can force termcolor to write
-            //       the styling prefix and suffix into the formatter.
-            //       This would allow us to use the same code for both cases,
-            //       and avoid additional string alloc
-            write!(output, "{}", style.paint(self.result.to_string()))
+        if self.syscall == Sysno::exit || self.syscall == Sysno::exit_group {
+            write!(output, "?")?;
         } else {
-            write!(output, "{}", self.result)
-        }?;
-        if show_duration {
-            // TODO: add an option to control each syscall duration scaling, e.g. ms, us, ns
-            write!(output, " <{:.6}ns>", self.duration.as_nanos())?;
+            if use_colors {
+                let style = match self.result {
+                    RetCode::Ok(_) => Green.bold(),
+                    RetCode::Err(_) => Red.bold(),
+                    RetCode::Address(_) => Yellow.bold(),
+                };
+                // TODO: it would be great if we can force termcolor to write
+                //       the styling prefix and suffix into the formatter.
+                //       This would allow us to use the same code for both cases,
+                //       and avoid additional string alloc
+                write!(output, "{}", style.paint(self.result.to_string()))
+            } else {
+                write!(output, "{}", self.result)
+            }?;
+            if show_duration {
+                // TODO: add an option to control each syscall duration scaling, e.g. ms, us, ns
+                write!(output, " <{:.6}ns>", self.duration.as_nanos())?;
+            }
         }
         Ok(writeln!(output)?)
     }

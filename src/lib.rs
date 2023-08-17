@@ -1,13 +1,11 @@
 //! lurk is a pretty (simple) alternative to strace.
 
 #[deny(clippy::all, clippy::pedantic, clippy::format_push_string)]
-//
 // TODO: re-check the casting lints - they might indicate an issue
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     clippy::cast_precision_loss,
-    clippy::if_not_else, // FIXME: remove this
     clippy::redundant_closure_for_method_calls,
     clippy::struct_excessive_bools,
 )]
@@ -20,10 +18,13 @@ use comfy_table::modifiers::UTF8_ROUND_CORNERS;
 use comfy_table::presets::UTF8_BORDERS_ONLY;
 use comfy_table::CellAlignment::Right;
 use comfy_table::{Cell, ContentArrangement, Row, Table};
+use libc::{user_regs_struct, PTRACE_SYSCALL_INFO_EXIT};
 use linux_personality::{personality, ADDR_NO_RANDOMIZE};
-use nix::sys::ptrace;
-use nix::sys::wait::wait;
+use nix::sys::ptrace::{self, Event};
+use nix::sys::signal::Signal;
+use nix::sys::wait::{wait, WaitStatus};
 use nix::unistd::Pid;
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::os::unix::process::CommandExt;
@@ -32,7 +33,6 @@ use std::time::{Duration, SystemTime};
 use syscalls::{Sysno, SysnoMap, SysnoSet};
 use users::get_user_by_name;
 
-use crate::arch::enable_follow_forks;
 use crate::args::{Args, Filter};
 use crate::syscall_info::{RetCode, SyscallInfo};
 
@@ -88,85 +88,122 @@ impl Tracer {
 
     #[allow(clippy::too_many_lines)]
     pub fn run_tracer(&mut self) -> Result<()> {
-        // Use a flag to indicate if we have already set the needed options once in a loop (if required)
-        let mut follow_forks = self.args.follow_forks;
-        // If Some(t), we expect the next syscall to be the first call of a pair of syscalls
-        let mut syscall_start_time: Option<SystemTime> = None;
+        // Create a hashmap to track entry and exit times across all forked processes individually.
+        let mut start_times = HashMap::<Pid, Option<SystemTime>>::new();
+        start_times.insert(self.pid, None);
+
+        let mut options_initialized = false;
 
         loop {
-            // Wait for the next system call
-            wait()?;
+            let status = wait()?;
 
-            // TODO: move this out of the loop if possible, or explain why can't
-            if follow_forks {
-                follow_forks = false;
-                enable_follow_forks(self.pid)?;
-            }
-
-            let Ok(registers) = ptrace::getregs(self.pid) else {
-                break
-            };
-
-            // FIXME: what is 336??? The highest syscall we have is rseq = 334
-            //        per syscalls crate, there is a big gap after rseq until pidfd_send_signal = 424
-            if registers.orig_rax >= 336 {
-                continue;
-            }
-            let Ok(sys_no) = (registers.orig_rax as u32).try_into() else {
-                continue
-            };
-
-            // ptrace gets invoked twice per system call: once before and once after execution
-            // only print output at second ptrace invocation
-            // TODO: explain why these two syscalls should be handled differently?
-            // TODO: should we handle if two subsequent syscalls are NOT the same?
-            if syscall_start_time.is_some()
-                || sys_no == Sysno::execve
-                || sys_no == Sysno::exit_group
-            {
-                let ret_code = RetCode::from_raw(registers.rax);
-                if let RetCode::Err(_) = ret_code {
-                    self.syscalls_fail[sys_no] += 1
+            if !options_initialized {
+                if self.args.follow_forks {
+                    arch::ptrace_init_options_fork(self.pid)?;
                 } else {
-                    self.syscalls_pass[sys_no] += 1
-                };
+                    arch::ptrace_init_options(self.pid)?;
+                }
+                options_initialized = true;
+            }
 
-                if self.filter.matches(sys_no, ret_code) {
-                    // Measure system call execution time
-                    let elapsed = if let Some(start_time) = syscall_start_time {
-                        let elapsed = SystemTime::now()
-                            .duration_since(start_time)
-                            .unwrap_or_default();
-                        self.syscalls_time[sys_no] += elapsed;
-                        elapsed
-                    } else {
-                        Duration::default()
-                    };
+            match status {
+                // `WIFSTOPPED(status), signal is WSTOPSIG(status)
+                WaitStatus::Stopped(pid, signal) => {
+                    // There are three reasons why a child might stop with SIGTRAP:
+                    // 1) syscall entry
+                    // 2) syscall exit
+                    // 3) child calls exec
+                    //
+                    // Because we are tracing with PTRACE_O_TRACESYSGOOD, syscall entry and syscall exit
+                    // are stopped in PtraceSyscall and not here, which means if we get a SIGTRAP here,
+                    // it's because the child called exec.
+                    if signal == Signal::SIGTRAP {
+                        self.log_standard_syscall(pid, None, None)?;
+                    }
 
-                    if !self.args.summary_only {
-                        // TODO: if we follow forks, we should also capture/print the pid of the child process
-                        let info = SyscallInfo::new(self.pid, sys_no, ret_code, registers, elapsed);
-                        if self.args.json {
-                            let json = serde_json::to_string(&info)?;
-                            writeln!(&mut self.output, "{json}")?;
-                        } else {
-                            info.write_syscall(
-                                self.use_colors,
-                                self.string_limit,
-                                self.args.syscall_number,
-                                self.args.syscall_times,
+                    // If we trace with PTRACE_O_TRACEFORK, PTRACE_O_TRACEVFORK, and PTRACE_O_TRACECLONE,
+                    // a created child of our tracee will stop with SIGSTOP.
+                    // If our tracee creates children of their own, we want to trace their syscall times with a new value.
+                    if signal == Signal::SIGSTOP && self.args.follow_forks {
+                        start_times.insert(pid, None);
+
+                        if !self.args.summary_only {
+                            writeln!(
                                 &mut self.output,
+                                "Attaching to child {}",
+                                pid,
                             )?;
                         }
                     }
-                }
-                syscall_start_time = None;
-            } else {
-                syscall_start_time = Some(SystemTime::now());
-            }
 
-            if ptrace::syscall(self.pid, None).is_err() {
-                break;
+                    // The SIGCHLD signal is sent to a process when a child process terminates, interrupted, or resumes after being interrupted
+                    // This means, that if our tracee forked and said fork exits before the parent, the parent will get stopped.
+                    // Therefor issue a PTRACE_SYSCALL request to the parent to continue execution.
+                    // This is also important if we trace without the following forks option.
+                    //if signal == Signal::SIGCHLD {}
+
+                    self.issue_ptrace_syscall_request(pid, None)?;
+                }
+                // WIFEXITED(status)
+                WaitStatus::Exited(pid, _) => {
+                    // If the process that exits is the original tracee, we can safely break here,
+                    // but we need to continue if the process that exits is a child of the original tracee.
+                    if self.pid == pid { break } else { continue };
+                }
+                // The traced process was stopped by a `PTRACE_EVENT_*` event.
+                WaitStatus::PtraceEvent(pid, _, code) => {
+                    // We stop at the PTRACE_EVENT_EXIT event because of the PTRACE_O_TRACEEXIT option.
+                    // We do this to properly catch and log exit-family syscalls, which do not have an PTRACE_SYSCALL_INFO_EXIT event.
+                    if code == Event::PTRACE_EVENT_EXIT as i32 {
+                        self.log_standard_syscall(pid, None, None)?;
+                    }
+
+                    self.issue_ptrace_syscall_request(pid, None)?;
+                }
+                // Tracee is traced with the PTRACE_O_TRACESYSGOOD option.
+                WaitStatus::PtraceSyscall(pid) => {
+                    // ptrace(PTRACE_GETEVENTMSG,...) can be one of three values here:
+                    // 1) PTRACE_SYSCALL_INFO_NONE
+                    // 2) PTRACE_SYSCALL_INFO_ENTRY
+                    // 3) PTRACE_SYSCALL_INFO_EXIT
+                    let event = ptrace::getevent(pid)? as u8;
+
+                    // Snapshot current time, to avoid polluting the syscall time with
+                    // non-syscall related latency.
+                    let timestamp = Some(SystemTime::now());
+
+                    // We only want to log regular syscalls on exit
+                    if let Some(syscall_start_time) = start_times.get_mut(&pid) {
+                        if event == PTRACE_SYSCALL_INFO_EXIT {
+                            self.log_standard_syscall(pid, *syscall_start_time, timestamp)?;
+                            *syscall_start_time = None;
+                        } else {
+                            *syscall_start_time = timestamp;
+                        }
+                    } else {
+                        return Err(anyhow!(format!(
+                            "Unable to get start time for tracee {}",
+                            pid
+                        )));
+                    }
+
+                    self.issue_ptrace_syscall_request(pid, None)?;
+                }
+                // WIFSIGNALED(status), signal is WTERMSIG(status) and coredump is WCOREDUMP(status)
+                WaitStatus::Signaled(pid, signal, coredump) => {
+                    writeln!(
+                        &mut self.output,
+                        "Child {} terminated by signal {} {}",
+                        pid,
+                        signal,
+                        if coredump { "(core dumped)" } else { "" }
+                    )?;
+                }
+                // WIFCONTINUED(status), this usually happens when a process receives a SIGCONT.
+                // Just continue with the next iteration of the loop.
+                WaitStatus::Continued(_) | WaitStatus::StillAlive => {
+                    continue;
+                }
             }
         }
 
@@ -189,6 +226,7 @@ impl Tracer {
             .apply_modifier(UTF8_ROUND_CORNERS)
             .set_content_arrangement(ContentArrangement::Dynamic)
             .set_header(&headers);
+
         for i in 0..headers.len() {
             table.column_mut(i).unwrap().set_cell_alignment(Right);
         }
@@ -261,6 +299,97 @@ impl Tracer {
             writeln!(&mut self.output)?;
         }
         writeln!(&mut self.output, "{table}")?;
+
+        Ok(())
+    }
+
+    // Issues a ptrace(PTRACE_GETREGS, ...) request and gets the corresponding syscall number (Sysno).
+    fn get_register_data(&self, pid: Pid) -> Result<(Sysno, user_regs_struct)> {
+        let Ok(registers) = ptrace::getregs(pid) else {
+            return Err(anyhow!(format!(
+                "Unable to get registers from tracee {}",
+                pid
+            )));
+        };
+
+        let Ok(syscall_number) = (registers.orig_rax as u32).try_into() else {
+            return Err(anyhow!(format!(
+                "Unable to get syscall number from tracee {}",
+                pid
+            )));
+        };
+
+        Ok((syscall_number, registers))
+    }
+
+    fn log_standard_syscall(
+        &mut self,
+        pid: Pid,
+        syscall_start_time: Option<SystemTime>,
+        syscall_end_time: Option<SystemTime>,
+    ) -> Result<()> {
+        let (syscall_number, registers) = self.get_register_data(pid)?;
+
+        // Theres no PTRACE_SYSCALL_INFO_EXIT for an exit-family syscall, hence ret_code will always be 0xffffffffffffffda (which is -38)
+        // -38 is ENOSYS which is put into RAX as a default return value by the kernel's syscall entry code.
+        // In order to not pollute the summary with this false positive, avoid exit-family syscalls from being counted (same behaviour as strace).
+        let ret_code = match syscall_number {
+            Sysno::exit | Sysno::exit_group => RetCode::from_raw(0),
+            _ => {
+                let code = RetCode::from_raw(registers.rax);
+                match code {
+                    RetCode::Err(_) => self.syscalls_fail[syscall_number] += 1,
+                    _ => self.syscalls_pass[syscall_number] += 1,
+                }
+                code
+            }
+        };
+
+        if self.filter.matches(syscall_number, ret_code) {
+            let elapsed = if let Some(start_time) = syscall_start_time {
+                // If we have a syscall_end_time, use it to calculate the elapsed time
+                let elapsed = if let Some(end_time) = syscall_end_time {
+                    end_time.duration_since(start_time).unwrap_or_default()
+                } else {
+                    // Otherwise, use the current time
+                    SystemTime::now()
+                        .duration_since(start_time)
+                        .unwrap_or_default()
+                };
+                self.syscalls_time[syscall_number] += elapsed;
+                elapsed
+            } else {
+                Duration::default()
+            };
+
+            if !self.args.summary_only {
+                let info = SyscallInfo::new(pid, syscall_number, ret_code, registers, elapsed);
+                if self.args.json {
+                    let json = serde_json::to_string(&info)?;
+                    writeln!(&mut self.output, "{json}")?;
+                } else {
+                    info.write_syscall(
+                        self.use_colors,
+                        self.string_limit,
+                        self.args.syscall_number,
+                        self.args.syscall_times,
+                        &mut self.output,
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    // Issue a PTRACE_SYSCALL request to the tracee, forwarding a signal if one is provided.
+    fn issue_ptrace_syscall_request(&self, pid: Pid, signal: Option<Signal>) -> Result<()> {
+        ptrace::syscall(pid, signal).map_err(|_| {
+            anyhow!(format!(
+                "Unable to issue a PTRACE_SYSCALL request in tracee {}",
+                self.pid
+            ))
+        })?;
 
         Ok(())
     }
