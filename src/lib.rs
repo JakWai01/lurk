@@ -198,6 +198,7 @@ impl Tracer {
                         signal,
                         if coredump { "(core dumped)" } else { "" }
                     )?;
+                    break;
                 }
                 // WIFCONTINUED(status), this usually happens when a process receives a SIGCONT.
                 // Just continue with the next iteration of the loop.
