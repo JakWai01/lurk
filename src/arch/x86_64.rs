@@ -284,32 +284,6 @@ pub static TRACE_CLOCK: SysnoSet = SysnoSet::new(&[
     clock_adjtime,
 ]);
 
-/*
-macro_rules! syscall {
-    ($name:ident $(,)?) => {
-        (Sysno::$name, [None, None, None, None, None, None])
-    };
-    ($name:ident, $arg0:ident $(,)?) => {
-        (Sysno::$name, [$arg0, None, None, None, None, None])
-    };
-    ($name:ident, $arg0:ident, $arg1:ident $(,)?) => {
-        (Sysno::$name, [$arg0, $arg1, None, None, None, None])
-    };
-    ($name:ident, $arg0:ident, $arg1:ident, $arg2:ident $(,)?) => {
-        (Sysno::$name, [$arg0, $arg1, $arg2, None, None, None])
-    };
-    ($name:ident, $arg0:ident, $arg1:ident, $arg2:ident, $arg3:ident $(,)?) => {
-        (Sysno::$name, [$arg0, $arg1, $arg2, $arg3, None, None])
-    };
-    ($name:ident, $arg0:ident, $arg1:ident, $arg2:ident, $arg3:ident, $arg4:ident $(,)?) => {
-        (Sysno::$name, [$arg0, $arg1, $arg2, $arg3, $arg4, None])
-    };
-    ($name:ident, $arg0:ident, $arg1:ident, $arg2:ident, $arg3:ident, $arg4:ident, $arg5:ident $(,)?) => {
-        (Sysno::$name, [$arg0, $arg1, $arg2, $arg3, $arg4, $arg5])
-    };
-}
-*/
-
 macro_rules! syscall {
     ($name:ident $(,)?) => {
         Some((Sysno::$name, [None, None, None, None, None, None]))
