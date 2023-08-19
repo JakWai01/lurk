@@ -310,31 +310,13 @@ impl Tracer {
         Ok(())
     }
 
-    // Issues a ptrace(PTRACE_GETREGS, ...) request and gets the corresponding syscall number (Sysno).
-    fn get_register_data(&self, pid: Pid) -> Result<(Sysno, user_regs_struct)> {
-        let registers = ptrace::getregs(pid)
-            .map_err(|_| anyhow!("Unable to get registers from tracee {}", pid))?;
-
-        let syscall_number = (registers.orig_rax as u32).try_into()
-            .map_err(|_| anyhow!("Unable to get syscall number from tracee {}", pid))?;
-
-        Ok((syscall_number, registers))
-    }
-
-    fn is_exit_syscall(&self, pid: Pid) -> Result<bool> {
-        let registers = ptrace::getregs(pid)
-            .map_err(|_| anyhow!("Unable to get registers from tracee {}", pid))?;
-
-        Ok(registers.orig_rax == Sysno::exit as u64 || registers.orig_rax == Sysno::exit_group as u64)
-    }
-
     fn log_standard_syscall(
         &mut self,
         pid: Pid,
         syscall_start_time: Option<SystemTime>,
         syscall_end_time: Option<SystemTime>,
     ) -> Result<()> {
-        let (syscall_number, registers) = self.get_register_data(pid)?;
+        let (syscall_number, registers) = self.parse_register_data(pid)?;
 
         // Theres no PTRACE_SYSCALL_INFO_EXIT for an exit-family syscall, hence ret_code will always be 0xffffffffffffffda (which is -38)
         // -38 is ENOSYS which is put into RAX as a default return value by the kernel's syscall entry code.
@@ -387,11 +369,40 @@ impl Tracer {
 
     // Issue a PTRACE_SYSCALL request to the tracee, forwarding a signal if one is provided.
     fn issue_ptrace_syscall_request(&self, pid: Pid, signal: Option<Signal>) -> Result<()> {
-        ptrace::syscall(pid, signal).map_err(|_| {
+        ptrace::syscall(pid, signal).map_err(|_|
             anyhow!(
                 "Unable to issue a PTRACE_SYSCALL request in tracee {}",
                 pid
             )
+        )
+    }
+
+    // TODO: This is arch-specific code and should be modularized
+    fn get_registers(&self, pid: Pid) -> Result<user_regs_struct> {
+        ptrace::getregs(pid).map_err(|_|
+            anyhow!(
+                "Unable to get registers from tracee {}",
+                pid
+            )
+        )
+    }
+
+    fn get_syscall(&self, registers: user_regs_struct) -> Result<Sysno> {
+        (registers.orig_rax as u32).try_into()
+            .map_err(|_| anyhow!("Invalid syscall number {}", registers.orig_rax))
+    }
+
+    // Issues a ptrace(PTRACE_GETREGS, ...) request and gets the corresponding syscall number (Sysno).
+    fn parse_register_data(&self, pid: Pid) -> Result<(Sysno, user_regs_struct)> {
+        let registers = self.get_registers(pid)?;
+        let syscall_number = self.get_syscall(registers)?;
+
+        Ok((syscall_number, registers))
+    }
+
+    fn is_exit_syscall(&self, pid: Pid) -> Result<bool> {
+        self.get_registers(pid).map(|registers| {
+            registers.orig_rax == Sysno::exit as u64 || registers.orig_rax == Sysno::exit_group as u64
         })
     }
 }
