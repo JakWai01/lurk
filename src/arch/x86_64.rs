@@ -227,6 +227,7 @@ pub static TRACE_SIGNAL: SysnoSet = SysnoSet::new(&[
     signalfd,
     signalfd4,
     rt_tgsigqueueinfo,
+    pidfd_send_signal,
 ]);
 
 pub static TRACE_MEMORY: SysnoSet = SysnoSet::new(&[
@@ -285,25 +286,25 @@ pub static TRACE_CLOCK: SysnoSet = SysnoSet::new(&[
 
 macro_rules! syscall {
     ($name:ident $(,)?) => {
-        (Sysno::$name, [None, None, None, None, None, None])
+        Some((Sysno::$name, [None, None, None, None, None, None]))
     };
     ($name:ident, $arg0:ident $(,)?) => {
-        (Sysno::$name, [$arg0, None, None, None, None, None])
+        Some((Sysno::$name, [$arg0, None, None, None, None, None]))
     };
     ($name:ident, $arg0:ident, $arg1:ident $(,)?) => {
-        (Sysno::$name, [$arg0, $arg1, None, None, None, None])
+        Some((Sysno::$name, [$arg0, $arg1, None, None, None, None]))
     };
     ($name:ident, $arg0:ident, $arg1:ident, $arg2:ident $(,)?) => {
-        (Sysno::$name, [$arg0, $arg1, $arg2, None, None, None])
+        Some((Sysno::$name, [$arg0, $arg1, $arg2, None, None, None]))
     };
     ($name:ident, $arg0:ident, $arg1:ident, $arg2:ident, $arg3:ident $(,)?) => {
-        (Sysno::$name, [$arg0, $arg1, $arg2, $arg3, None, None])
+        Some((Sysno::$name, [$arg0, $arg1, $arg2, $arg3, None, None]))
     };
     ($name:ident, $arg0:ident, $arg1:ident, $arg2:ident, $arg3:ident, $arg4:ident $(,)?) => {
-        (Sysno::$name, [$arg0, $arg1, $arg2, $arg3, $arg4, None])
+        Some((Sysno::$name, [$arg0, $arg1, $arg2, $arg3, $arg4, None]))
     };
     ($name:ident, $arg0:ident, $arg1:ident, $arg2:ident, $arg3:ident, $arg4:ident, $arg5:ident $(,)?) => {
-        (Sysno::$name, [$arg0, $arg1, $arg2, $arg3, $arg4, $arg5])
+        Some((Sysno::$name, [$arg0, $arg1, $arg2, $arg3, $arg4, $arg5]))
     };
 }
 
@@ -311,7 +312,7 @@ const ADDR: Option<SyscallArgType> = Some(SyscallArgType::Addr);
 const INT: Option<SyscallArgType> = Some(SyscallArgType::Int);
 const STR: Option<SyscallArgType> = Some(SyscallArgType::Str);
 
-pub static SYSCALLS: [(Sysno, [Option<SyscallArgType>; 6]); 335] = [
+pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 451] = [
     // DESC
     syscall!(read, INT, STR, INT),
     // DESC
@@ -888,6 +889,127 @@ pub static SYSCALLS: [(Sysno, [Option<SyscallArgType>; 6]); 335] = [
     syscall!(statx, INT, STR, INT, INT, STR),
     syscall!(io_pgetevents),
     syscall!(rseq),
+    // We jump from syscall number 334 to 424 here
+    // See: https://git.musl-libc.org/cgit/musl/commit/?id=f3f96f2daa4d00f0e38489fb465cd0244b531abe
+    //      https://github.com/torvalds/linux/commit/0d6040d4681735dfc47565de288525de405a5c99
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    syscall!(pidfd_send_signal, INT, INT, ADDR, INT),
+    syscall!(io_uring_setup, INT, ADDR),
+    syscall!(io_uring_enter, INT, INT, INT, INT, ADDR, INT),
+    syscall!(io_uring_register, INT, INT, ADDR, INT),
+    syscall!(open_tree, INT, STR, INT),
+    syscall!(move_mount, INT, STR, INT, STR, INT),
+    syscall!(fsopen, STR, INT),
+    syscall!(fsconfig, INT, INT, STR, ADDR, INT),
+    syscall!(fsmount, INT, INT, INT),
+    syscall!(fspick, INT, STR, INT),
+    syscall!(pidfd_open, INT, INT),
+    syscall!(clone3, ADDR, INT),
+    syscall!(close_range, INT, INT, INT),
+    syscall!(openat2, INT, STR, ADDR, INT),
+    syscall!(pidfd_getfd, INT, INT, INT),
+    syscall!(faccessat2, INT, STR, INT, INT),
+    syscall!(process_madvise, INT, ADDR, INT, INT, INT),
+    syscall!(epoll_pwait2, INT, ADDR, INT, ADDR, ADDR, INT),
+    syscall!(mount_setattr, INT, STR, INT, ADDR, INT),
+    syscall!(quotactl_fd, INT, INT, INT, ADDR),
+    syscall!(landlock_create_ruleset, ADDR, INT, INT),
+    syscall!(landlock_add_rule, INT, INT, ADDR, INT),
+    syscall!(landlock_restrict_self, INT, INT),
+    syscall!(memfd_secret, INT),
+    syscall!(process_mrelease, INT, INT),
+    syscall!(futex_waitv, ADDR, INT, INT, ADDR, INT),
+    syscall!(set_mempolicy_home_node, INT, INT, INT, INT),
+    // 451 - cachestat not yet implemented by the syscall crate
+    // syscall!(cachestat, INT, INT, INT, INT)
 ];
 
 pub fn get_arg_value(registers: user_regs_struct, i: usize) -> c_ulonglong {
@@ -908,9 +1030,12 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::cast_sign_loss)]
     fn test_syscall_numbers() {
-        for (i, (sysno, ..)) in SYSCALLS.iter().enumerate() {
-            assert_eq!(i, sysno.id() as usize);
+        for (i, sysno, ..) in SYSCALLS.iter().enumerate() {
+            if let Some((sysno, _)) = sysno {
+                assert_eq!(i, sysno.id() as usize);
+            }
         }
     }
 }
