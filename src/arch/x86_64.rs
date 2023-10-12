@@ -312,7 +312,7 @@ const ADDR: Option<SyscallArgType> = Some(SyscallArgType::Addr);
 const INT: Option<SyscallArgType> = Some(SyscallArgType::Int);
 const STR: Option<SyscallArgType> = Some(SyscallArgType::Str);
 
-pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 451] = [
+pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // DESC
     syscall!(read, INT, STR, INT),
     // DESC
@@ -1008,8 +1008,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 451] = [
     syscall!(process_mrelease, INT, INT),
     syscall!(futex_waitv, ADDR, INT, INT, ADDR, INT),
     syscall!(set_mempolicy_home_node, INT, INT, INT, INT),
-    // 451 - cachestat not yet implemented by the syscall crate
-    // syscall!(cachestat, INT, INT, INT, INT)
+    syscall!(cachestat, INT, INT, INT, INT)
 ];
 
 pub fn get_arg_value(registers: user_regs_struct, i: usize) -> c_ulonglong {
