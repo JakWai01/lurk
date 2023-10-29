@@ -375,7 +375,10 @@ impl<W: Write> Tracer<W> {
         let ret_code = match syscall_number {
             Sysno::exit | Sysno::exit_group => RetCode::from_raw(0),
             _ => {
+                #[cfg(target_arch = "x86_64")]
                 let code = RetCode::from_raw(registers.rax);
+                #[cfg(target_arch = "riscv64")]
+                let code = RetCode::from_raw(registers.a7);
                 match code {
                     RetCode::Err(_) => self.syscalls_fail[syscall_number] += 1,
                     _ => self.syscalls_pass[syscall_number] += 1,
@@ -430,9 +433,12 @@ impl<W: Write> Tracer<W> {
     }
 
     fn get_syscall(&self, registers: user_regs_struct) -> Result<Sysno> {
-        (registers.orig_rax as u32)
-            .try_into()
-            .map_err(|_| anyhow!("Invalid syscall number {}", registers.orig_rax))
+        #[cfg(target_arch = "x86_64")]
+        let reg = registers.orig_rax;
+        #[cfg(target_arch = "riscv64")]
+        let reg = registers.a7;
+        (reg as u32).try_into()
+            .map_err(|_| anyhow!("Invalid syscall number {}", reg))
     }
 
     // Issues a ptrace(PTRACE_GETREGS, ...) request and gets the corresponding syscall number (Sysno).
@@ -445,8 +451,11 @@ impl<W: Write> Tracer<W> {
 
     fn is_exit_syscall(&self, pid: Pid) -> Result<bool> {
         self.get_registers(pid).map(|registers| {
-            registers.orig_rax == Sysno::exit as u64
-                || registers.orig_rax == Sysno::exit_group as u64
+            #[cfg(target_arch = "x86_64")]
+            let reg = registers.orig_rax;
+            #[cfg(target_arch = "riscv64")]
+            let reg = registers.a7;
+            reg == Sysno::exit as u64 || reg == Sysno::exit_group as u64
         })
     }
 }
