@@ -144,7 +144,7 @@ impl Tracer {
                     // Therefor issue a PTRACE_SYSCALL request to the parent to continue execution.
                     // This is also important if we trace without the following forks option.
                     if signal == Signal::SIGCHLD {
-                        self.issue_ptrace_syscall_request(pid, None)?;
+                        ptrace::cont(pid, signal)?;
                         continue;
                     }
 
