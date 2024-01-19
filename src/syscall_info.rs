@@ -1,4 +1,4 @@
-use crate::arch::parse_args;
+use crate::arch::{parse_args, escape_to_string};
 use ansi_term::Color::{Blue, Green, Red, Yellow};
 use ansi_term::Style;
 use libc::{c_ulonglong, user_regs_struct};
@@ -7,7 +7,7 @@ use serde::ser::{SerializeMap, SerializeSeq};
 use serde::Serialize;
 use serde::__private::ser::FlatMapSerializer;
 use serde_json::Value;
-use std::borrow::Cow::{self, Borrowed, Owned};
+use std::borrow::Cow;
 use std::fmt::{Debug, Display};
 use std::io;
 use std::io::Write;
@@ -120,7 +120,7 @@ impl Serialize for SyscallArgs {
         for arg in &self.0 {
             let value = match arg {
                 SyscallArg::Int(v) => serde_json::to_value(v).unwrap(),
-                SyscallArg::Str(v) => serde_json::to_value(v).unwrap(),
+                SyscallArg::Bytes(v) => serde_json::to_value(escape_to_string(v)).unwrap(),
                 SyscallArg::Addr(v) => Value::String(format!("{v:#x}")),
             };
             seq.serialize_element(&value)?;
@@ -165,7 +165,7 @@ impl Display for RetCode {
 #[derive(Debug, Serialize)]
 pub enum SyscallArg {
     Int(i64),
-    Str(String),
+    Bytes(Vec<u8>),
     Addr(usize),
 }
 
@@ -173,23 +173,18 @@ impl SyscallArg {
     pub fn write(&self, f: &mut dyn Write, string_limit: Option<usize>) -> io::Result<()> {
         match self {
             Self::Int(v) => write!(f, "{v}"),
-            Self::Str(v) => {
-                // Use JSON string escaping
-                let value: Value = match string_limit {
-                    Some(width) => trim_str(v, width),
-                    None => Borrowed(v.as_ref()),
+            Self::Bytes(v) => {
+                let mut buf: Vec<u8> = Cow::Borrowed(v).into_owned();
+                if let Some(width) = string_limit {
+                    if buf.len() > width {
+                        buf.truncate(width);
+                        let _ = buf.write(b"...");
+                    }
                 }
-                .into();
-                write!(f, "{value}")
+                write!(f, "{}", serde_json::to_value(escape_to_string(&buf))?)?;
+                Ok(())
             }
             Self::Addr(v) => write!(f, "{v:#X}"),
         }
-    }
-}
-
-fn trim_str(string: &str, limit: usize) -> Cow<str> {
-    match string.chars().as_str().get(..limit) {
-        None => Borrowed(string),
-        Some(s) => Owned(format!("{s}...")),
     }
 }

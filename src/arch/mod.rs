@@ -57,24 +57,24 @@ pub use x86_64::*;
 pub enum SyscallArgType {
     // Integer can be used to represent int, fd and size_t
     Int,
-    // String can be used to represent *buf
-    Str,
+    // Bytes can be used to represent *buf
+    Bytes,
     // Address can be used to represent *statbuf
     Addr,
 }
 
-pub fn read_string(pid: Pid, address: c_ulonglong) -> String {
-    let mut string = String::new();
+pub fn read_bytes<'a>(pid: Pid, address: c_ulonglong, length: usize) -> Vec<u8> {
     // Move 8 bytes up each time for next read.
-    let mut count = 0;
-    let word_size = 8;
+    let mut count: usize = 0;
+    let word_size: usize = 8;
+    let mut buf = Vec::<u8>::new();
 
-    'done: loop {
-        let address = unsafe { (address as *mut c_void).offset(count) };
+    loop {
+        let address = unsafe { (address as *mut c_void).offset(count as isize) };
 
         let res: c_long = match ptrace::read(pid, address) {
             Ok(c_long) => c_long,
-            Err(_) => break 'done,
+            Err(_) => break,
         };
 
         let mut bytes: Vec<u8> = vec![];
@@ -82,16 +82,17 @@ pub fn read_string(pid: Pid, address: c_ulonglong) -> String {
             panic!("Failed to write {res} as i64 LittleEndian: {err}");
         });
         for b in bytes {
-            if b == 0 {
-                break 'done;
-            }
-            string.push(b as char);
+            buf.push(b);
         }
 
         count += word_size;
+        if count >= length {
+            break;
+        }
     }
 
-    string
+    buf.truncate(length);
+    buf
 }
 
 pub fn ptrace_init_options(pid: Pid) -> nix::Result<()> {
@@ -138,9 +139,29 @@ pub fn parse_args(pid: Pid, syscall: Sysno, registers: user_regs_struct) -> Sysc
 
 fn map_arg(pid: Pid, registers: user_regs_struct, idx: usize, arg: SyscallArgType) -> SyscallArg {
     let value = get_arg_value(registers, idx);
+    // The return value of a system call for functions like read or write represents the number of bytes that were successfully processed.
+    // which will stores in rax
+    let length = registers.rax as usize;
     match arg {
         SyscallArgType::Int => SyscallArg::Int(value as i64),
-        SyscallArgType::Str => SyscallArg::Str(read_string(pid, value)),
+        SyscallArgType::Bytes => SyscallArg::Bytes(read_bytes(pid, value, length)),
         SyscallArgType::Addr => SyscallArg::Addr(value as usize),
     }
+}
+
+pub fn escape_to_string(buf: &Vec<u8>) -> String {
+    let mut string = String::new();
+    for c in buf {
+        let code = *c;
+        if 0x20 <= code && code <= 0x7f {
+            if code != b'\\' {
+                string.push(char::from(code))
+            } else {
+                string.push_str("\\\\")
+            }
+        } else {
+            string.push_str(format!("\\{:x}", c).as_str());
+        }
+    }
+    string
 }
