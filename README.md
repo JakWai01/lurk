@@ -22,7 +22,7 @@ most important use cases of `strace`.
 ### cURL
 ```sh
 curl -L -o /tmp/lurk.tar.gz "https://github.com/JakWai01/lurk/releases/latest/download/lurk-x86_64-unknown-linux-gnu.tar.gz"
-tar -xzf /tmp/lurk.tar.gz
+tar -xzf /tmp/lurk.tar.gz -C /tmp
 sudo install /tmp/lurk /usr/local/bin
 ```
 
