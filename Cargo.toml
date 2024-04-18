@@ -34,12 +34,12 @@ all = [
 x86_64 = []
 
 [dependencies]
-ansi_term = "0.12"
 anyhow = "1"
 atty = "0.2"
 byteorder = "1"
 clap = { version = "4", features = ["derive"] }
 comfy-table = "7"
+console = "0.15.8"
 libc = "0.2"
 linux-personality = "1"
 nix = { version = "0.27", features = ["ptrace", "signal"] }

@@ -319,6 +319,10 @@ $ lurk --expr trace=openat,close,mmap ls
 [55440] mmap(0xf7f9e000, 20480, 5, 2066, 3, 12288) = 0xf7f9e000
 ```
 
+#### Using as a Rust library
+
+See the [tracer](examples/tracer.rs) example.
+
 ## Acknowledgements
 
 - [sharkdp/fd](https://github.com/sharkdp/fd) as an inspiration on how to

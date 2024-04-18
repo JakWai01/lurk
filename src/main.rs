@@ -1,5 +1,9 @@
+use std::fs::OpenOptions;
+use std::io::{BufWriter, Write};
+
 use anyhow::{bail, Context, Result};
 use clap::{CommandFactory, Parser};
+use lurk_cli::style::StyleConfig;
 use nix::sys::ptrace;
 use nix::unistd::{fork, ForkResult, Pid};
 
@@ -32,5 +36,20 @@ fn main() -> Result<()> {
         return Ok(());
     };
 
-    Tracer::new(pid, config)?.run_tracer()
+    // TODO: we may also add a --color option to force colors, and a --no-color option to disable it
+    let mut style_config = StyleConfig::default();
+    let output: Box<dyn Write> = if let Some(filepath) = &config.file {
+        style_config.use_colors = false;
+        Box::new(BufWriter::new(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(filepath)?,
+        ))
+    } else {
+        style_config.use_colors = atty::is(atty::Stream::Stdout);
+        Box::new(std::io::stdout())
+    };
+
+    Tracer::new(pid, config, output, style_config)?.run_tracer()
 }
