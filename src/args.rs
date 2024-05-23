@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use syscalls::{Sysno, SysnoSet};
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Default)]
 #[command(name = "lurk", about, version, allow_external_subcommands = true)]
 pub struct Args {
     /// Display system call numbers

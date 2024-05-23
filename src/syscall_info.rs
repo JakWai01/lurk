@@ -1,6 +1,5 @@
-use crate::arch::{parse_args, escape_to_string};
-use ansi_term::Color::{Blue, Green, Red, Yellow};
-use ansi_term::Style;
+use crate::arch::{escape_to_string, parse_args};
+use crate::style::StyleConfig;
 use libc::{c_ulonglong, user_regs_struct};
 use nix::unistd::Pid;
 use serde::ser::{SerializeMap, SerializeSeq};
@@ -44,22 +43,22 @@ impl SyscallInfo {
 
     pub fn write_syscall(
         &self,
-        use_colors: bool,
+        style: StyleConfig,
         string_limit: Option<usize>,
         show_syscall_num: bool,
         show_duration: bool,
         output: &mut dyn Write,
     ) -> anyhow::Result<()> {
-        if use_colors {
-            write!(output, "[{}] ", Blue.bold().paint(&self.pid.to_string()))?;
+        if style.use_colors {
+            write!(output, "[{}] ", style.pid.apply_to(&self.pid.to_string()))?;
         } else {
             write!(output, "[{}] ", &self.pid)?;
         }
         if show_syscall_num {
             write!(output, "{:>3} ", self.syscall.id())?;
         }
-        if use_colors {
-            let styled = Style::new().bold().paint(self.syscall.to_string());
+        if style.use_colors {
+            let styled = style.syscall.apply_to(self.syscall.to_string());
             write!(output, "{styled}(")
         } else {
             write!(output, "{}(", &self.syscall)
@@ -74,17 +73,13 @@ impl SyscallInfo {
         if self.syscall == Sysno::exit || self.syscall == Sysno::exit_group {
             write!(output, "?")?;
         } else {
-            if use_colors {
-                let style = match self.result {
-                    RetCode::Ok(_) => Green.bold(),
-                    RetCode::Err(_) => Red.bold(),
-                    RetCode::Address(_) => Yellow.bold(),
-                };
+            if style.use_colors {
+                let style = style.from_ret_code(self.result);
                 // TODO: it would be great if we can force termcolor to write
                 //       the styling prefix and suffix into the formatter.
                 //       This would allow us to use the same code for both cases,
                 //       and avoid additional string alloc
-                write!(output, "{}", style.paint(self.result.to_string()))
+                write!(output, "{}", style.apply_to(self.result.to_string()))
             } else {
                 write!(output, "{}", self.result)
             }?;

@@ -1,4 +1,59 @@
 //! lurk is a pretty (simple) alternative to strace.
+//!
+//! ## Installation
+//!
+//! Add the following dependencies to your `Cargo.toml`
+//!
+//! ```toml
+//! [dependencies]
+//! lurk-cli = "0.3.4"
+//! nix = { version = "0.27.1", features = ["ptrace", "signal"] }
+//! console = "0.15.8"
+//! ```
+//!
+//! ## Usage
+//!
+//! First crate a tracee using [`run_tracee`] method. Then you can construct a [`Tracer`]
+//! struct to trace the system calls via calling [`run_tracer`].
+//!
+//! ## Examples
+//!
+//! ```rust
+//! use anyhow::{bail, Result};
+//! use console::Style;
+//! use lurk_cli::{args::Args, style::StyleConfig, Tracer};
+//! use nix::unistd::{fork, ForkResult};
+//! use std::io;
+//!
+//! fn main() -> Result<()> {
+//!     let command = String::from("/usr/bin/ls");
+//!
+//!     let pid = match unsafe { fork() } {
+//!         Ok(ForkResult::Child) => {
+//!             return lurk_cli::run_tracee(&[command], &[], &None);
+//!         }
+//!         Ok(ForkResult::Parent { child }) => child,
+//!         Err(err) => bail!("fork() failed: {err}"),
+//!     };
+//!
+//!     let args = Args::default();
+//!     let output = io::stdout();
+//!     let style = StyleConfig {
+//!         pid: Style::new().cyan(),
+//!         syscall: Style::new().white().bold(),
+//!         success: Style::new().green(),
+//!         error: Style::new().red(),
+//!         result: Style::new().yellow(),
+//!         use_colors: true,
+//!     };
+//!
+//!     Tracer::new(pid, args, output, style)?.run_tracer()
+//! }
+//! ```
+//!
+//! [`run_tracee`]: crate::run_tracee
+//! [`Tracer`]: crate::Tracer
+//! [`run_tracer`]: crate::Tracer::run_tracer
 
 #[deny(clippy::all, clippy::pedantic, clippy::format_push_string)]
 // TODO: re-check the casting lints - they might indicate an issue
@@ -11,6 +66,7 @@
 )]
 pub mod arch;
 pub mod args;
+pub mod style;
 pub mod syscall_info;
 
 use anyhow::{anyhow, Result};
@@ -25,11 +81,11 @@ use nix::sys::signal::Signal;
 use nix::sys::wait::{wait, WaitStatus};
 use nix::unistd::Pid;
 use std::collections::HashMap;
-use std::fs::OpenOptions;
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
+use style::StyleConfig;
 use syscalls::{Sysno, SysnoMap, SysnoSet};
 use users::get_user_by_name;
 
@@ -38,7 +94,7 @@ use crate::syscall_info::{RetCode, SyscallInfo};
 
 const STRING_LIMIT: usize = 32;
 
-pub struct Tracer {
+pub struct Tracer<W: Write> {
     pid: Pid,
     args: Args,
     string_limit: Option<usize>,
@@ -46,27 +102,12 @@ pub struct Tracer {
     syscalls_time: SysnoMap<Duration>,
     syscalls_pass: SysnoMap<u64>,
     syscalls_fail: SysnoMap<u64>,
-    use_colors: bool,
-    output: Box<dyn Write>,
+    style_config: StyleConfig,
+    output: W,
 }
 
-impl Tracer {
-    pub fn new(pid: Pid, args: Args) -> Result<Self> {
-        // TODO: we may also add a --color option to force colors, and a --no-color option to disable it
-        let use_colors;
-        let output: Box<dyn Write> = if let Some(filepath) = &args.file {
-            use_colors = false;
-            Box::new(BufWriter::new(
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(filepath)?,
-            ))
-        } else {
-            use_colors = atty::is(atty::Stream::Stdout);
-            Box::new(std::io::stdout())
-        };
-
+impl<W: Write> Tracer<W> {
+    pub fn new(pid: Pid, args: Args, output: W, style_config: StyleConfig) -> Result<Self> {
         Ok(Self {
             pid,
             filter: args.create_filter()?,
@@ -81,9 +122,13 @@ impl Tracer {
             ),
             syscalls_pass: SysnoMap::from_iter(SysnoSet::all().iter().map(|v| (v, 0))),
             syscalls_fail: SysnoMap::from_iter(SysnoSet::all().iter().map(|v| (v, 0))),
-            use_colors,
+            style_config,
             output,
         })
+    }
+
+    pub fn set_output(&mut self, output: W) {
+        self.output = output;
     }
 
     #[allow(clippy::too_many_lines)]
@@ -358,7 +403,7 @@ impl Tracer {
             Ok(writeln!(&mut self.output, "{json}")?)
         } else {
             info.write_syscall(
-                self.use_colors,
+                self.style_config.clone(),
                 self.string_limit,
                 self.args.syscall_number,
                 self.args.syscall_times,
