@@ -98,9 +98,7 @@ pub fn read_bytes<'a>(pid: Pid, address: c_ulonglong, length: usize) -> Vec<u8> 
 pub fn ptrace_init_options(pid: Pid) -> nix::Result<()> {
     ptrace::setoptions(
         pid,
-        Options::PTRACE_O_TRACESYSGOOD
-            | Options::PTRACE_O_TRACEEXIT
-            | Options::PTRACE_O_TRACEEXEC,
+        Options::PTRACE_O_TRACESYSGOOD | Options::PTRACE_O_TRACEEXIT | Options::PTRACE_O_TRACEEXEC,
     )
 }
 
