@@ -1008,7 +1008,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     syscall!(process_mrelease, INT, INT),
     syscall!(futex_waitv, ADDR, INT, INT, ADDR, INT),
     syscall!(set_mempolicy_home_node, INT, INT, INT, INT),
-    syscall!(cachestat, INT, INT, INT, INT)
+    syscall!(cachestat, INT, INT, INT, INT),
 ];
 
 pub fn get_arg_value(registers: user_regs_struct, i: usize) -> c_ulonglong {

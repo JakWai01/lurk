@@ -202,7 +202,11 @@ impl<W: Write> Tracer<W> {
                 WaitStatus::Exited(pid, _) => {
                     // If the process that exits is the original tracee, we can safely break here,
                     // but we need to continue if the process that exits is a child of the original tracee.
-                    if self.pid == pid { break } else { continue };
+                    if self.pid == pid {
+                        break;
+                    } else {
+                        continue;
+                    };
                 }
                 // The traced process was stopped by a `PTRACE_EVENT_*` event.
                 WaitStatus::PtraceEvent(pid, _, code) => {
@@ -292,7 +296,9 @@ impl<W: Write> Tracer<W> {
                 self.syscalls_pass.get(sysno),
                 self.syscalls_fail.get(sysno),
                 self.syscalls_time.get(sysno),
-            ) else { continue };
+            ) else {
+                continue;
+            };
 
             let calls = pass + fail;
             if calls == 0 {
@@ -414,26 +420,18 @@ impl<W: Write> Tracer<W> {
 
     // Issue a PTRACE_SYSCALL request to the tracee, forwarding a signal if one is provided.
     fn issue_ptrace_syscall_request(&self, pid: Pid, signal: Option<Signal>) -> Result<()> {
-        ptrace::syscall(pid, signal).map_err(|_|
-            anyhow!(
-                "Unable to issue a PTRACE_SYSCALL request in tracee {}",
-                pid
-            )
-        )
+        ptrace::syscall(pid, signal)
+            .map_err(|_| anyhow!("Unable to issue a PTRACE_SYSCALL request in tracee {}", pid))
     }
 
     // TODO: This is arch-specific code and should be modularized
     fn get_registers(&self, pid: Pid) -> Result<user_regs_struct> {
-        ptrace::getregs(pid).map_err(|_|
-            anyhow!(
-                "Unable to get registers from tracee {}",
-                pid
-            )
-        )
+        ptrace::getregs(pid).map_err(|_| anyhow!("Unable to get registers from tracee {}", pid))
     }
 
     fn get_syscall(&self, registers: user_regs_struct) -> Result<Sysno> {
-        (registers.orig_rax as u32).try_into()
+        (registers.orig_rax as u32)
+            .try_into()
             .map_err(|_| anyhow!("Invalid syscall number {}", registers.orig_rax))
     }
 
@@ -447,7 +445,8 @@ impl<W: Write> Tracer<W> {
 
     fn is_exit_syscall(&self, pid: Pid) -> Result<bool> {
         self.get_registers(pid).map(|registers| {
-            registers.orig_rax == Sysno::exit as u64 || registers.orig_rax == Sysno::exit_group as u64
+            registers.orig_rax == Sysno::exit as u64
+                || registers.orig_rax == Sysno::exit_group as u64
         })
     }
 }
