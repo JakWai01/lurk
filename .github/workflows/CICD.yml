@@ -1,8 +1,9 @@
 name: CICD
-on: 
+on:
   release:
     types:
       - published
+
 jobs:
   build_for_linux:
     name: Linux
@@ -19,15 +20,15 @@ jobs:
           bin: lurk
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+
   publish:
     name: crates.io
     runs-on: ubuntu-latest
     steps:
-        - uses: actions/checkout@v2
-        - uses: actions-rs/toolchain@v1
-          with:
-              toolchain: stable
-              override: true
-        - uses: katyo/publish-crates@v1
-          with:
-              registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - name: Publish
+        run: cargo publish --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
