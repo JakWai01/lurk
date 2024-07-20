@@ -19,6 +19,8 @@ use syscalls::Sysno;
 // pub mod powerpc;
 // #[cfg(any(target_arch = "powerpc64", feature = "powerpc64"))]
 // pub mod powerpc64;
+#[cfg(any(target_arch = "riscv64", feature = "riscv64"))]
+pub mod riscv64;
 // #[cfg(any(target_arch = "s390x", feature = "s390x"))]
 // pub mod s390x;
 // #[cfg(any(target_arch = "sparc", feature = "sparc"))]
@@ -42,6 +44,8 @@ pub mod x86_64;
 // pub use powerpc::*;
 // #[cfg(target_arch = "powerpc64")]
 // pub use powerpc64::*;
+#[cfg(target_arch = "riscv64")]
+pub use riscv64::*;
 // #[cfg(target_arch = "s390x")]
 // pub use s390x::*;
 // #[cfg(target_arch = "sparc")]
@@ -139,7 +143,10 @@ fn map_arg(pid: Pid, registers: user_regs_struct, idx: usize, arg: SyscallArgTyp
     let value = get_arg_value(registers, idx);
     // The return value of a system call for functions like read or write represents the number of bytes that were successfully processed.
     // which will stores in rax
+    #[cfg(target_arch = "x86_64")]
     let length = registers.rax as usize;
+    #[cfg(target_arch = "riscv64")]
+    let length = registers.a7 as usize;
     match arg {
         SyscallArgType::Int => SyscallArg::Int(value as i64),
         SyscallArgType::Bytes => SyscallArg::Bytes(read_bytes(pid, value, length)),

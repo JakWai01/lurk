@@ -17,7 +17,7 @@ default = []
 all = [
 #    "aarch64", "arm", "mips", "mips64", "powerpc", "powerpc64", "s390x",
 #    "sparc", "sparc64", "x86",
-    "x86_64"
+    "x86_64", "riscv64"
 ]
 
 # Enable syscall tables for individual architectures.
@@ -32,6 +32,7 @@ all = [
 #sparc64 = []
 #x86 = []
 x86_64 = []
+riscv64 = []
 
 [dependencies]
 anyhow = "1"
