@@ -6,7 +6,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! lurk-cli = "0.3.4"
+//! lurk-cli = "0.3.6"
 //! nix = { version = "0.27.1", features = ["ptrace", "signal"] }
 //! console = "0.15.8"
 //! ```
@@ -437,7 +437,8 @@ impl<W: Write> Tracer<W> {
         let reg = registers.orig_rax;
         #[cfg(target_arch = "riscv64")]
         let reg = registers.a7;
-        (reg as u32).try_into()
+        (reg as u32)
+            .try_into()
             .map_err(|_| anyhow!("Invalid syscall number {}", reg))
     }
 
