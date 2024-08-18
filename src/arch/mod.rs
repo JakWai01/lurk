@@ -7,8 +7,8 @@ use nix::unistd::Pid;
 use std::ffi::c_void;
 use syscalls::Sysno;
 
-// #[cfg(any(target_arch = "aarch64", feature = "aarch64"))]
-// pub mod aarch64;
+#[cfg(any(target_arch = "aarch64", feature = "aarch64"))]
+pub mod aarch64;
 // #[cfg(any(target_arch = "arm", feature = "arm"))]
 // pub mod arm;
 // #[cfg(any(target_arch = "mips", feature = "mips"))]
@@ -32,8 +32,8 @@ pub mod riscv64;
 #[cfg(any(target_arch = "x86_64", feature = "x86_64"))]
 pub mod x86_64;
 
-// #[cfg(target_arch = "aarch64")]
-// pub use aarch64::*;
+#[cfg(target_arch = "aarch64")]
+pub use aarch64::*;
 // #[cfg(target_arch = "arm")]
 // pub use arm::*;
 // #[cfg(target_arch = "mips")]
@@ -61,24 +61,24 @@ pub use x86_64::*;
 pub enum SyscallArgType {
     // Integer can be used to represent int, fd and size_t
     Int,
-    // Bytes can be used to represent *buf
-    Bytes,
+    // String can be used to represent *buf
+    Str,
     // Address can be used to represent *statbuf
     Addr,
 }
 
-pub fn read_bytes<'a>(pid: Pid, address: c_ulonglong, length: usize) -> Vec<u8> {
+pub fn read_string(pid: Pid, address: c_ulonglong) -> String {
+    let mut string = String::new();
     // Move 8 bytes up each time for next read.
-    let mut count: usize = 0;
-    let word_size: usize = 8;
-    let mut buf = Vec::<u8>::new();
+    let mut count = 0;
+    let word_size = 8;
 
-    loop {
-        let address = unsafe { (address as *mut c_void).offset(count as isize) };
+    'done: loop {
+        let address = unsafe { (address as *mut c_void).offset(count) };
 
         let res: c_long = match ptrace::read(pid, address) {
             Ok(c_long) => c_long,
-            Err(_) => break,
+            Err(_) => break 'done,
         };
 
         let mut bytes: Vec<u8> = vec![];
@@ -86,17 +86,16 @@ pub fn read_bytes<'a>(pid: Pid, address: c_ulonglong, length: usize) -> Vec<u8> 
             panic!("Failed to write {res} as i64 LittleEndian: {err}");
         });
         for b in bytes {
-            buf.push(b);
+            if b == 0 {
+                break 'done;
+            }
+            string.push(b as char);
         }
 
         count += word_size;
-        if count >= length {
-            break;
-        }
     }
 
-    buf.truncate(length);
-    buf
+    string
 }
 
 pub fn ptrace_init_options(pid: Pid) -> nix::Result<()> {
@@ -141,15 +140,9 @@ pub fn parse_args(pid: Pid, syscall: Sysno, registers: user_regs_struct) -> Sysc
 
 fn map_arg(pid: Pid, registers: user_regs_struct, idx: usize, arg: SyscallArgType) -> SyscallArg {
     let value = get_arg_value(registers, idx);
-    // The return value of a system call for functions like read or write represents the number of bytes that were successfully processed.
-    // which will stores in rax
-    #[cfg(target_arch = "x86_64")]
-    let length = registers.rax as usize;
-    #[cfg(target_arch = "riscv64")]
-    let length = registers.a7 as usize;
     match arg {
         SyscallArgType::Int => SyscallArg::Int(value as i64),
-        SyscallArgType::Bytes => SyscallArg::Bytes(read_bytes(pid, value, length)),
+        SyscallArgType::Str => SyscallArg::Str(read_string(pid, value)),
         SyscallArgType::Addr => SyscallArg::Addr(value as usize),
     }
 }

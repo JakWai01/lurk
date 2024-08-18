@@ -1,11 +1,11 @@
 use crate::arch::SyscallArgType;
 use libc::{c_ulonglong, user_regs_struct};
 use std::ops::Index;
-use syscalls::riscv64::Sysno;
+use syscalls::aarch64::Sysno;
 use syscalls::SysnoSet;
 
 #[allow(clippy::enum_glob_use)]
-use syscalls::riscv64::Sysno::*;
+use syscalls::aarch64::Sysno::*;
 
 pub static TRACE_DESC: SysnoSet = SysnoSet::new(&[
     // strace/src/linux/64/syscallent.h
@@ -120,6 +120,8 @@ pub static TRACE_DESC: SysnoSet = SysnoSet::new(&[
     landlock_restrict_self,
     memfd_secret,
     process_mrelease,
+    cachestat,
+    fchmodat2,
 ]);
 
 pub static TRACE_FILE: SysnoSet = SysnoSet::new(&[
@@ -174,6 +176,7 @@ pub static TRACE_FILE: SysnoSet = SysnoSet::new(&[
     openat2,
     faccessat2,
     mount_setattr,
+    fchmodat2,
 ]);
 
 pub static TRACE_IPC: SysnoSet = SysnoSet::new(&[
@@ -277,8 +280,7 @@ pub static TRACE_MEMORY: SysnoSet = SysnoSet::new(&[
     // strace/src/linux/generic/syscallent-common.h
     io_uring_register,
     set_mempolicy_home_node,
-    // strace/src/linux/riscv64/syscallent.h
-    // riscv_flush_icache,
+    map_shadow_stack
 ]);
 
 pub static TRACE_STAT: SysnoSet = SysnoSet::new(&[fstatat, fstat, statx]);
@@ -359,27 +361,25 @@ const ADDR: Option<SyscallArgType> = Some(SyscallArgType::Addr);
 const INT: Option<SyscallArgType> = Some(SyscallArgType::Int);
 const STR: Option<SyscallArgType> = Some(SyscallArgType::Str);
 
-pub struct Riscv64Syscalls {
+pub struct Aarch64Syscalls {
     _0: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 244],
-    _258: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 37],
-    _403: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 12],
-    _416: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 36],
+    _260: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 35],
+    _424: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 29],
 }
 
-impl Riscv64Syscalls {
+impl Aarch64Syscalls {
     pub fn get(&self, index: usize) -> Option<&Option<(Sysno, [Option<SyscallArgType>; 6])>> {
         let result = match index {
             0..=243 => &self._0[index],
-            260..=294 => &self._258[index - 258],
-            403..=414 => &self._403[index - 403],
-            416..=451 => &self._416[index - 416],
+            260..=294 => &self._260[index - 260],
+            424..=452 => &self._424[index - 424],
             _ => return None,
         };
         Some(result)
     }
 }
 
-impl Index<usize> for Riscv64Syscalls {
+impl Index<usize> for Aarch64Syscalls {
     type Output = Option<(Sysno, [Option<SyscallArgType>; 6])>;
 
     fn index(&self, index: usize) -> &Self::Output {
@@ -387,7 +387,7 @@ impl Index<usize> for Riscv64Syscalls {
     }
 }
 
-pub static SYSCALLS: Riscv64Syscalls = Riscv64Syscalls {
+pub static SYSCALLS: Aarch64Syscalls = Aarch64Syscalls {
     _0: [
         syscall!(io_setup, INT, ADDR),
         syscall!(io_destroy, INT),
@@ -634,9 +634,7 @@ pub static SYSCALLS: Riscv64Syscalls = Riscv64Syscalls {
         syscall!(accept4, INT, ADDR, ADDR, INT),
         syscall!(recvmmsg, INT, ADDR, INT, INT, ADDR),
     ],
-    _258: [
-        syscall!(riscv_hwprobe, ADDR, INT, INT, ADDR, INT),
-        syscall!(riscv_flush_icache, ADDR, ADDR, INT),
+    _260: [
         syscall!(wait4, INT, ADDR, INT, ADDR),
         syscall!(prlimit64, INT, INT, ADDR, ADDR),
         syscall!(fanotify_init, INT, INT),
@@ -673,31 +671,7 @@ pub static SYSCALLS: Riscv64Syscalls = Riscv64Syscalls {
         syscall!(rseq, ADDR, INT, INT, INT),
         syscall!(kexec_file_load, INT, INT, INT, STR, INT),
     ],
-    _403: [
-        // These time64 syscalls are the same as the original variant on 64-bit systems.
-        syscall!(clock_gettime64, INT, ADDR),
-        syscall!(clock_settime64, INT, ADDR),
-        syscall!(clock_adjtime64, INT, ADDR),
-        syscall!(clock_getres_time64, INT, ADDR),
-        syscall!(clock_nanosleep_time64, INT, INT, ADDR, ADDR),
-        syscall!(timer_gettime64, INT, ADDR),
-        syscall!(timer_settime64, INT, INT, ADDR, ADDR),
-        syscall!(timerfd_gettime64, INT, ADDR),
-        syscall!(timerfd_settime64, INT, INT, ADDR, ADDR),
-        syscall!(utimensat_time64, INT, STR, ADDR, INT),
-        syscall!(pselect6_time64, INT, ADDR, ADDR, ADDR, ADDR, ADDR),
-        syscall!(ppoll_time64, ADDR, INT, ADDR, ADDR, INT),
-    ],
-    _416: [
-        // These time64 syscalls are the same as the original variant on 64-bit systems.
-        syscall!(io_pgetevents_time64, INT, INT, INT, ADDR, ADDR, ADDR),
-        syscall!(recvmmsg_time64, INT, ADDR, INT, INT, ADDR),
-        syscall!(mq_timedsend_time64, INT, STR, INT, INT, ADDR),
-        syscall!(mq_timedreceive_time64, INT, STR, INT, ADDR, ADDR),
-        syscall!(semtimedop_time64, INT, ADDR, INT, ADDR),
-        syscall!(rt_sigtimedwait_time64, ADDR, ADDR, ADDR, INT),
-        syscall!(futex_time64, ADDR, INT, INT, ADDR, ADDR, INT),
-        syscall!(sched_rr_get_interval_time64, INT, ADDR),
+    _424: [
         syscall!(pidfd_send_signal, INT, INT, ADDR, INT),
         syscall!(io_uring_setup, INT, ADDR),
         syscall!(io_uring_enter, INT, INT, INT, INT, ADDR, INT),
@@ -726,17 +700,18 @@ pub static SYSCALLS: Riscv64Syscalls = Riscv64Syscalls {
         syscall!(futex_waitv, ADDR, INT, INT, ADDR, INT),
         syscall!(set_mempolicy_home_node, INT, INT, INT, INT),
         syscall!(cachestat, INT, INT, INT, INT),
+        syscall!(fchmodat2, INT, STR, INT, INT),
     ],
 };
 
 pub fn get_arg_value(registers: user_regs_struct, i: usize) -> c_ulonglong {
     match i {
-        0 => registers.a0,
-        1 => registers.a1,
-        2 => registers.a2,
-        3 => registers.a3,
-        4 => registers.a4,
-        5 => registers.a5,
+        0 => registers.regs[0],
+        1 => registers.regs[1],
+        2 => registers.regs[2],
+        3 => registers.regs[3],
+        4 => registers.regs[4],
+        5 => registers.regs[5],
         v => panic!("Invalid system call index {v}!"),
     }
 }
@@ -753,19 +728,14 @@ mod tests {
                 assert_eq!(i, sysno.id() as usize);
             }
         }
-        for (i, sysno, ..) in SYSCALLS._258.iter().enumerate() {
+        for (i, sysno, ..) in SYSCALLS._260.iter().enumerate() {
             if let Some((sysno, _)) = sysno {
-                assert_eq!(i + 258, sysno.id() as usize);
+                assert_eq!(i + 260, sysno.id() as usize);
             }
         }
-        for (i, sysno, ..) in SYSCALLS._403.iter().enumerate() {
+        for (i, sysno, ..) in SYSCALLS._424.iter().enumerate() {
             if let Some((sysno, _)) = sysno {
-                assert_eq!(i + 403, sysno.id() as usize);
-            }
-        }
-        for (i, sysno, ..) in SYSCALLS._416.iter().enumerate() {
-            if let Some((sysno, _)) = sysno {
-                assert_eq!(i + 416, sysno.id() as usize);
+                assert_eq!(i + 424, sysno.id() as usize);
             }
         }
     }
