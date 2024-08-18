@@ -74,7 +74,7 @@ use comfy_table::modifiers::UTF8_ROUND_CORNERS;
 use comfy_table::presets::UTF8_BORDERS_ONLY;
 use comfy_table::CellAlignment::Right;
 use comfy_table::{Cell, ContentArrangement, Row, Table};
-use libc::{user_regs_struct, PTRACE_SYSCALL_INFO_EXIT};
+use libc::user_regs_struct;
 use linux_personality::{personality, ADDR_NO_RANDOMIZE};
 use nix::sys::ptrace::{self, Event};
 use nix::sys::signal::Signal;
@@ -232,7 +232,7 @@ impl<W: Write> Tracer<W> {
 
                     // We only want to log regular syscalls on exit
                     if let Some(syscall_start_time) = start_times.get_mut(&pid) {
-                        if event == PTRACE_SYSCALL_INFO_EXIT {
+                        if event == 2 {
                             self.log_standard_syscall(pid, *syscall_start_time, timestamp)?;
                             *syscall_start_time = None;
                         } else {
@@ -379,6 +379,8 @@ impl<W: Write> Tracer<W> {
                 let code = RetCode::from_raw(registers.rax);
                 #[cfg(target_arch = "riscv64")]
                 let code = RetCode::from_raw(registers.a7);
+                #[cfg(target_arch = "aarch64")]
+                let code: RetCode = RetCode::from_raw(registers.regs[8]);
                 match code {
                     RetCode::Err(_) => self.syscalls_fail[syscall_number] += 1,
                     _ => self.syscalls_pass[syscall_number] += 1,
@@ -437,6 +439,8 @@ impl<W: Write> Tracer<W> {
         let reg = registers.orig_rax;
         #[cfg(target_arch = "riscv64")]
         let reg = registers.a7;
+        #[cfg(target_arch = "aarch64")]
+        let reg = registers.regs[8];
         (reg as u32)
             .try_into()
             .map_err(|_| anyhow!("Invalid syscall number {}", reg))
@@ -456,6 +460,8 @@ impl<W: Write> Tracer<W> {
             let reg = registers.orig_rax;
             #[cfg(target_arch = "riscv64")]
             let reg = registers.a7;
+            #[cfg(target_arch = "aarch64")]
+            let reg = registers.regs[8];
             reg == Sysno::exit as u64 || reg == Sysno::exit_group as u64
         })
     }

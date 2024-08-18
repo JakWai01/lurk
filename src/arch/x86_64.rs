@@ -310,23 +310,23 @@ macro_rules! syscall {
 
 const ADDR: Option<SyscallArgType> = Some(SyscallArgType::Addr);
 const INT: Option<SyscallArgType> = Some(SyscallArgType::Int);
-const BYTES: Option<SyscallArgType> = Some(SyscallArgType::Bytes);
+const STR: Option<SyscallArgType> = Some(SyscallArgType::Str);
 
 pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // DESC
-    syscall!(read, INT, BYTES, INT),
+    syscall!(read, INT, STR, INT),
     // DESC
-    syscall!(write, INT, BYTES, INT),
+    syscall!(write, INT, STR, INT),
     // DESC, FILE
-    syscall!(open, BYTES, INT, INT),
+    syscall!(open, STR, INT, INT),
     // DESC
     syscall!(close, INT),
     // FILE, STAT, STAT_LIKE
-    syscall!(stat, BYTES, ADDR),
+    syscall!(stat, STR, ADDR),
     // DESC, FSTAT, STAT_LIKE
     syscall!(fstat, INT, ADDR),
     // FILE, LSTAT, STAT_LIKE
-    syscall!(lstat, BYTES, ADDR),
+    syscall!(lstat, STR, ADDR),
     // DESC
     syscall!(poll, ADDR, INT, INT),
     // DESC
@@ -347,15 +347,15 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     syscall!(rt_sigreturn),
     syscall!(ioctl, INT, INT, ADDR),
     // DESC
-    syscall!(pread64, INT, BYTES, INT, INT),
+    syscall!(pread64, INT, STR, INT, INT),
     // DESC
-    syscall!(pwrite64, INT, BYTES, INT, INT),
+    syscall!(pwrite64, INT, STR, INT, INT),
     // DESC
     syscall!(readv, INT, ADDR, INT),
     // DESC
     syscall!(writev, INT, ADDR, INT),
     // FILE
-    syscall!(access, BYTES, INT),
+    syscall!(access, STR, INT),
     // DESC
     syscall!(pipe, INT, INT),
     // DESC
@@ -374,7 +374,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // IPC, MEMORY
     syscall!(shmat, INT, ADDR, INT),
     // IPC
-    syscall!(shmctl, INT, INT, BYTES),
+    syscall!(shmctl, INT, INT, STR),
     // DESC
     syscall!(dup, INT),
     // DESC
@@ -396,9 +396,9 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // NETWORK
     syscall!(accept, INT, ADDR, ADDR),
     // NETWORK
-    syscall!(sendto, INT, BYTES, INT, INT),
+    syscall!(sendto, INT, STR, INT, INT),
     // NETWORK
-    syscall!(recvfrom, INT, BYTES, INT, INT, ADDR, ADDR),
+    syscall!(recvfrom, INT, STR, INT, INT, ADDR, ADDR),
     // NETWORK
     syscall!(sendmsg, INT, ADDR, INT),
     // NETWORK
@@ -426,7 +426,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // PROCESS
     syscall!(vfork, ADDR),
     // PROCESS
-    syscall!(execve, BYTES, BYTES, BYTES),
+    syscall!(execve, STR, STR, STR),
     // PROCESS
     syscall!(exit, INT),
     // PROCESS
@@ -459,43 +459,43 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // DESC
     syscall!(fdatasync, INT),
     // FILE
-    syscall!(truncate, BYTES, INT),
+    syscall!(truncate, STR, INT),
     // DESC
     syscall!(ftruncate, INT, INT),
     // DESC
     syscall!(getdents, INT, ADDR, INT),
     // FILE
-    syscall!(getcwd, BYTES, INT),
+    syscall!(getcwd, STR, INT),
     // FILE
-    syscall!(chdir, BYTES),
+    syscall!(chdir, STR),
     // DESC
     syscall!(fchdir, INT),
     // FILE
-    syscall!(rename, BYTES, BYTES),
+    syscall!(rename, STR, STR),
     // FILE
-    syscall!(mkdir, BYTES, INT),
+    syscall!(mkdir, STR, INT),
     // FILE
-    syscall!(rmdir, BYTES),
+    syscall!(rmdir, STR),
     // DESC, FILE
-    syscall!(creat, BYTES, INT),
+    syscall!(creat, STR, INT),
     // FILE
-    syscall!(link, BYTES, BYTES),
+    syscall!(link, STR, STR),
     // FILE
-    syscall!(unlink, BYTES),
+    syscall!(unlink, STR),
     // FILE
-    syscall!(symlink, BYTES, BYTES),
+    syscall!(symlink, STR, STR),
     // FILE
-    syscall!(readlink, BYTES, BYTES, INT),
+    syscall!(readlink, STR, STR, INT),
     // FILE
-    syscall!(chmod, BYTES, INT),
+    syscall!(chmod, STR, INT),
     // DESC
     syscall!(fchmod, INT, INT),
     // FILE
-    syscall!(chown, BYTES, INT, INT),
+    syscall!(chown, STR, INT, INT),
     // DESC
     syscall!(fchown, INT, INT, INT),
     // FILE
-    syscall!(lchown, BYTES, INT, INT),
+    syscall!(lchown, STR, INT, INT),
     syscall!(umask, INT),
     // CLOCK
     syscall!(gettimeofday, ADDR, ADDR),
@@ -506,7 +506,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     syscall!(ptrace, ADDR, INT, ADDR, ADDR),
     // CREDS, PURE
     syscall!(getuid, ADDR),
-    syscall!(syslog, INT, BYTES, INT),
+    syscall!(syslog, INT, STR, INT),
     // CREDS, PURE
     syscall!(getgid, ADDR),
     // CREDS
@@ -560,19 +560,19 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // SIGNAL
     syscall!(sigaltstack, ADDR, ADDR),
     // FILE
-    syscall!(utime, BYTES, ADDR, INT),
+    syscall!(utime, STR, ADDR, INT),
     // FILE
-    syscall!(mknod, BYTES, INT, INT),
+    syscall!(mknod, STR, INT, INT),
     // FILE
     syscall!(uselib, ADDR),
     syscall!(personality, INT),
     // STATFS_LIKE
     syscall!(ustat, INT, ADDR),
     // FILE, STATFS, STATFS_LIKE
-    syscall!(statfs, BYTES, ADDR),
+    syscall!(statfs, STR, ADDR),
     // FILE, FSTATFS, STATFS_LIKE
     syscall!(fstatfs, INT, ADDR),
-    syscall!(sysfs, INT, BYTES),
+    syscall!(sysfs, INT, STR),
     syscall!(getpriority, INT, INT),
     syscall!(setpriority, INT, INT, INT),
     syscall!(sched_setparam, INT, ADDR),
@@ -593,41 +593,41 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     syscall!(vhangup, ADDR),
     syscall!(modify_ldt, INT, ADDR, INT),
     // FILE
-    syscall!(pivot_root, BYTES, BYTES),
+    syscall!(pivot_root, STR, STR),
     syscall!(_sysctl, ADDR),
     // CREDS
     syscall!(prctl, INT, INT, INT, INT, INT),
     syscall!(arch_prctl, INT, ADDR),
     // CLOCK
-    syscall!(adjtimex, BYTES),
+    syscall!(adjtimex, STR),
     syscall!(setrlimit, INT, ADDR),
     // FILE
-    syscall!(chroot, BYTES),
+    syscall!(chroot, STR),
     syscall!(sync, INT),
     // FILE
-    syscall!(acct, BYTES),
+    syscall!(acct, STR),
     // CLOCK
     syscall!(settimeofday, ADDR, ADDR),
     // FILE
-    syscall!(mount, BYTES, BYTES, BYTES, INT, ADDR),
+    syscall!(mount, STR, STR, STR, INT, ADDR),
     // FILE
-    syscall!(umount2, BYTES, INT),
+    syscall!(umount2, STR, INT),
     // FILE
-    syscall!(swapon, BYTES, INT),
+    syscall!(swapon, STR, INT),
     // FILE
-    syscall!(swapoff, BYTES),
+    syscall!(swapoff, STR),
     syscall!(reboot, INT, INT, INT, ADDR),
-    syscall!(sethostname, BYTES, INT),
-    syscall!(setdomainname, BYTES, INT),
+    syscall!(sethostname, STR, INT),
+    syscall!(setdomainname, STR, INT),
     syscall!(iopl, INT),
     syscall!(ioperm, INT, INT, INT),
-    syscall!(create_module, BYTES, INT),
-    syscall!(init_module, ADDR, INT, BYTES),
-    syscall!(delete_module, BYTES, INT),
+    syscall!(create_module, STR, INT),
+    syscall!(init_module, ADDR, INT, STR),
+    syscall!(delete_module, STR, INT),
     syscall!(get_kernel_syms, ADDR),
-    syscall!(query_module, BYTES, INT, BYTES, INT, INT),
+    syscall!(query_module, STR, INT, STR, INT, INT),
     // FILE
-    syscall!(quotactl, INT, BYTES, INT, ADDR),
+    syscall!(quotactl, INT, STR, INT, ADDR),
     syscall!(nfsservctl, INT, ADDR, ADDR),
     // NETWORK
     syscall!(getpmsg),
@@ -641,29 +641,29 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // DESC
     syscall!(readahead, INT, INT, INT),
     // FILE
-    syscall!(setxattr, BYTES, BYTES, ADDR, INT, INT),
+    syscall!(setxattr, STR, STR, ADDR, INT, INT),
     // FILE
-    syscall!(lsetxattr, BYTES, BYTES, ADDR, INT, INT),
+    syscall!(lsetxattr, STR, STR, ADDR, INT, INT),
     // DESC
-    syscall!(fsetxattr, INT, BYTES, ADDR, INT, INT),
+    syscall!(fsetxattr, INT, STR, ADDR, INT, INT),
     // FILE
-    syscall!(getxattr, BYTES, BYTES, ADDR, INT),
+    syscall!(getxattr, STR, STR, ADDR, INT),
     // FILE
-    syscall!(lgetxattr, BYTES, BYTES, ADDR, INT),
+    syscall!(lgetxattr, STR, STR, ADDR, INT),
     // DESC
-    syscall!(fgetxattr, INT, BYTES, ADDR, INT),
+    syscall!(fgetxattr, INT, STR, ADDR, INT),
     // FILE
-    syscall!(listxattr, BYTES, BYTES, INT),
+    syscall!(listxattr, STR, STR, INT),
     // FILE
-    syscall!(llistxattr, BYTES, BYTES, INT),
+    syscall!(llistxattr, STR, STR, INT),
     // DESC
-    syscall!(flistxattr, INT, BYTES, INT),
+    syscall!(flistxattr, INT, STR, INT),
     // FILE
-    syscall!(removexattr, BYTES, BYTES),
+    syscall!(removexattr, STR, STR),
     // FILE
-    syscall!(lremovexattr, BYTES, BYTES),
+    syscall!(lremovexattr, STR, STR),
     // DESC
-    syscall!(fremovexattr, INT, BYTES),
+    syscall!(fremovexattr, INT, STR),
     // PROCESS, SIGNAL
     syscall!(tkill, INT, INT),
     // CLOCK
@@ -680,7 +680,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     syscall!(io_submit, INT, INT, ADDR),
     syscall!(io_cancel, INT, ADDR, ADDR),
     syscall!(get_thread_area, ADDR),
-    syscall!(lookup_dcookie, INT, BYTES, INT),
+    syscall!(lookup_dcookie, INT, STR, INT),
     // DESC
     syscall!(epoll_create, INT),
     syscall!(epoll_ctl_old, INT, INT, INT, ADDR),
@@ -716,7 +716,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // PROCESS
     syscall!(tgkill, INT, INT, INT),
     // FILE
-    syscall!(utimes, BYTES, ADDR),
+    syscall!(utimes, STR, ADDR),
     syscall!(vserver),
     // MEMORY
     syscall!(mbind, ADDR, INT, INT, INT, INT, INT),
@@ -725,10 +725,10 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // MEMORY
     syscall!(get_mempolicy, INT, INT, INT, ADDR, INT),
     // DESC
-    syscall!(mq_open, BYTES, INT),
-    syscall!(mq_unlink, BYTES),
+    syscall!(mq_open, STR, INT),
+    syscall!(mq_unlink, STR),
     // DESC
-    syscall!(mq_timedsend, INT, BYTES, INT, INT),
+    syscall!(mq_timedsend, INT, STR, INT, INT),
     // DESC
     syscall!(mq_timedreceive, INT, ADDR, INT, INT, ADDR),
     // DESC
@@ -738,45 +738,45 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     syscall!(kexec_load, INT, INT, ADDR, INT),
     // PROCESS
     syscall!(waitid, INT, INT, INT, INT),
-    syscall!(add_key, BYTES, BYTES, ADDR, INT, INT),
-    syscall!(request_key, BYTES, BYTES, BYTES, INT),
+    syscall!(add_key, STR, STR, ADDR, INT, INT),
+    syscall!(request_key, STR, STR, STR, INT),
     syscall!(keyctl, INT),
     syscall!(ioprio_set, INT, INT),
     syscall!(ioprio_get, INT, INT),
     // DESC
     syscall!(inotify_init, ADDR),
     // DESC, FILE
-    syscall!(inotify_add_watch, INT, BYTES, INT),
+    syscall!(inotify_add_watch, INT, STR, INT),
     // DESC
     syscall!(inotify_rm_watch, INT, INT),
     // MEMORY
     syscall!(migrate_pages, INT, INT, INT, INT),
     // DESC, FILE
-    syscall!(openat, INT, BYTES, INT),
+    syscall!(openat, INT, STR, INT),
     // DESC, FILE
-    syscall!(mkdirat, INT, BYTES, INT),
+    syscall!(mkdirat, INT, STR, INT),
     // DESC, FILE
-    syscall!(mknodat, INT, BYTES, INT, INT),
+    syscall!(mknodat, INT, STR, INT, INT),
     // DESC, FILE
-    syscall!(fchownat, INT, BYTES, INT, INT, INT),
+    syscall!(fchownat, INT, STR, INT, INT, INT),
     // DESC, FILE
-    syscall!(futimesat, INT, BYTES, ADDR),
+    syscall!(futimesat, INT, STR, ADDR),
     // DESC, FILE, FSTAT, STAT_LIKE
-    syscall!(newfstatat, INT, BYTES, ADDR, INT),
+    syscall!(newfstatat, INT, STR, ADDR, INT),
     // DESC, FILE
-    syscall!(unlinkat, INT, BYTES, INT),
+    syscall!(unlinkat, INT, STR, INT),
     // DESC, FILE
-    syscall!(renameat, INT, BYTES, INT, BYTES),
+    syscall!(renameat, INT, STR, INT, STR),
     // DESC, FILE
-    syscall!(linkat, INT, BYTES, INT, BYTES, INT),
+    syscall!(linkat, INT, STR, INT, STR, INT),
     // DESC, FILE
-    syscall!(symlinkat, BYTES, INT, BYTES),
+    syscall!(symlinkat, STR, INT, STR),
     // DESC, FILE
-    syscall!(readlinkat, INT, BYTES, BYTES, INT),
+    syscall!(readlinkat, INT, STR, STR, INT),
     // DESC, FILE
-    syscall!(fchmodat, INT, BYTES, INT, INT),
+    syscall!(fchmodat, INT, STR, INT, INT),
     // DESC, FILE
-    syscall!(faccessat, INT, BYTES, INT, INT),
+    syscall!(faccessat, INT, STR, INT, INT),
     // DESC
     syscall!(pselect6, INT, INT, INT, INT, ADDR, INT),
     // DESC
@@ -795,7 +795,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // MEMORY
     syscall!(move_pages, INT, INT, ADDR, INT, INT, INT),
     // DESC, FILE
-    syscall!(utimensat, INT, BYTES, ADDR, INT),
+    syscall!(utimensat, INT, STR, ADDR, INT),
     // DESC
     syscall!(epoll_pwait, INT, ADDR, INT, INT, INT),
     // DESC, SIGNAL
@@ -836,10 +836,10 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // DESC
     syscall!(fanotify_init, INT, INT),
     // DESC, FILE
-    syscall!(fanotify_mark, INT, INT, INT, INT, BYTES),
+    syscall!(fanotify_mark, INT, INT, INT, INT, STR),
     syscall!(prlimit64, INT, INT, ADDR, ADDR),
     // DESC, FILE
-    syscall!(name_to_handle_at, INT, BYTES, ADDR, INT, INT),
+    syscall!(name_to_handle_at, INT, STR, ADDR, INT, INT),
     // DESC
     syscall!(open_by_handle_at, INT, ADDR, INT),
     // CLOCK
@@ -855,21 +855,21 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     syscall!(process_vm_writev, INT, ADDR, INT, ADDR, INT, INT),
     syscall!(kcmp, INT, INT, INT, INT, INT),
     // DESC
-    syscall!(finit_module, INT, BYTES, INT),
+    syscall!(finit_module, INT, STR, INT),
     syscall!(sched_setattr, INT, ADDR, INT),
     syscall!(sched_getattr, INT, ADDR, INT, INT),
     // DESC, FILE
-    syscall!(renameat2, INT, BYTES, INT, BYTES),
+    syscall!(renameat2, INT, STR, INT, STR),
     syscall!(seccomp, INT, INT, ADDR),
-    syscall!(getrandom, BYTES, INT, INT),
+    syscall!(getrandom, STR, INT, INT),
     // DESC
-    syscall!(memfd_create, BYTES, INT),
+    syscall!(memfd_create, STR, INT),
     // DESC
     syscall!(kexec_file_load, INT, INT, ADDR, INT),
     // DESC
     syscall!(bpf, INT, ADDR, INT),
     // DESC, PROCESS
-    syscall!(execveat, INT, BYTES, BYTES, BYTES, INT),
+    syscall!(execveat, INT, STR, STR, STR, INT),
     // DESC
     syscall!(userfaultfd, INT),
     syscall!(membarrier, INT, INT, INT),
@@ -886,7 +886,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     syscall!(pkey_alloc, INT, INT),
     syscall!(pkey_free, INT),
     // DESC, FILE, FSTAT, STAT_LIKE
-    syscall!(statx, INT, BYTES, INT, INT, BYTES),
+    syscall!(statx, INT, STR, INT, INT, STR),
     syscall!(io_pgetevents),
     syscall!(rseq),
     // We jump from syscall number 334 to 424 here
@@ -985,21 +985,21 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     syscall!(io_uring_setup, INT, ADDR),
     syscall!(io_uring_enter, INT, INT, INT, INT, ADDR, INT),
     syscall!(io_uring_register, INT, INT, ADDR, INT),
-    syscall!(open_tree, INT, BYTES, INT),
-    syscall!(move_mount, INT, BYTES, INT, BYTES, INT),
-    syscall!(fsopen, BYTES, INT),
-    syscall!(fsconfig, INT, INT, BYTES, ADDR, INT),
+    syscall!(open_tree, INT, STR, INT),
+    syscall!(move_mount, INT, STR, INT, STR, INT),
+    syscall!(fsopen, STR, INT),
+    syscall!(fsconfig, INT, INT, STR, ADDR, INT),
     syscall!(fsmount, INT, INT, INT),
-    syscall!(fspick, INT, BYTES, INT),
+    syscall!(fspick, INT, STR, INT),
     syscall!(pidfd_open, INT, INT),
     syscall!(clone3, ADDR, INT),
     syscall!(close_range, INT, INT, INT),
-    syscall!(openat2, INT, BYTES, ADDR, INT),
+    syscall!(openat2, INT, STR, ADDR, INT),
     syscall!(pidfd_getfd, INT, INT, INT),
-    syscall!(faccessat2, INT, BYTES, INT, INT),
+    syscall!(faccessat2, INT, STR, INT, INT),
     syscall!(process_madvise, INT, ADDR, INT, INT, INT),
     syscall!(epoll_pwait2, INT, ADDR, INT, ADDR, ADDR, INT),
-    syscall!(mount_setattr, INT, BYTES, INT, ADDR, INT),
+    syscall!(mount_setattr, INT, STR, INT, ADDR, INT),
     syscall!(quotactl_fd, INT, INT, INT, ADDR),
     syscall!(landlock_create_ruleset, ADDR, INT, INT),
     syscall!(landlock_add_rule, INT, INT, ADDR, INT),
