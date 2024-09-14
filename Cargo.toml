@@ -1,10 +1,11 @@
 [package]
 name = "lurk-cli"
 version = "0.3.7"
-edition = "2021"
-authors = ["Jakob Waibel <salet@posteo.net>", "Yuri Astrakhan <YuriAstrakhan@gmail.com>"]
 description = "lurk is a pretty (simple) alternative to strace."
+authors = ["Jakob Waibel <salet@posteo.net>", "Yuri Astrakhan <YuriAstrakhan@gmail.com>"]
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/JakWai01/lurk"
+edition = "2021"
 
 [[bin]]
 name = "lurk"
