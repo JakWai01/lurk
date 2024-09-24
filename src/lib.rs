@@ -81,6 +81,7 @@ use nix::sys::signal::Signal;
 use nix::sys::wait::{wait, WaitStatus};
 use nix::unistd::Pid;
 use std::collections::HashMap;
+use std::fs;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
@@ -470,8 +471,17 @@ impl<W: Write> Tracer<W> {
 pub fn run_tracee(command: &[String], envs: &[String], username: &Option<String>) -> Result<()> {
     ptrace::traceme()?;
     personality(ADDR_NO_RANDOMIZE).map_err(|_| anyhow!("Unable to set ADDR_NO_RANDOMIZE"))?;
-
-    let mut cmd = Command::new(command.get(0).ok_or_else(|| anyhow!("No command"))?);
+    let mut binary = command
+        .get(0)
+        .ok_or_else(|| anyhow!("No command"))?
+        .to_string();
+    if let Ok(bin) = fs::canonicalize(&binary) {
+        binary = bin
+            .to_str()
+            .ok_or_else(|| anyhow!("Invalid binary path"))?
+            .to_string()
+    }
+    let mut cmd = Command::new(binary);
     cmd.args(command[1..].iter()).stdout(Stdio::null());
 
     for token in envs {
