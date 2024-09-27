@@ -1,5 +1,5 @@
 use std::fs::OpenOptions;
-use std::io::{BufWriter, Write};
+use std::io::{self, BufWriter, IsTerminal, Write};
 
 use anyhow::{bail, Context, Result};
 use clap::{CommandFactory, Parser};
@@ -47,7 +47,7 @@ fn main() -> Result<()> {
                 .open(filepath)?,
         ))
     } else {
-        style_config.use_colors = atty::is(atty::Stream::Stdout);
+        style_config.use_colors = io::stdout().is_terminal();
         Box::new(std::io::stdout())
     };
 
