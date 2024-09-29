@@ -63,6 +63,8 @@ pub enum SyscallArgType {
     Int,
     // String can be used to represent *buf
     Str,
+    // Vector of strings
+    VecStr,
     // Address can be used to represent *statbuf
     Addr,
 }
@@ -96,6 +98,33 @@ pub fn read_string(pid: Pid, address: c_ulonglong) -> String {
     }
 
     string
+}
+
+pub fn read_string_vec(pid: Pid, address: c_ulonglong) -> Vec<String> {
+    // Move 8 bytes up each time for next read.
+    let mut count = 0;
+    let word_size = 8;
+
+    let mut addrs = Vec::new();
+    'done: loop {
+        let address = unsafe { (address as *mut c_void).offset(count) };
+        let res: c_long = match ptrace::read(pid, address) {
+            Ok(c_long) => c_long,
+            Err(_) => break 'done,
+        };
+        if res == 0 {
+            break 'done;
+        }
+        addrs.push(res);
+        count += word_size;
+    }
+
+    let mut args = Vec::new();
+    for arg in addrs {
+        args.push(read_string(pid, arg as c_ulonglong));
+    }
+
+    args
 }
 
 pub fn ptrace_init_options(pid: Pid) -> nix::Result<()> {
@@ -144,6 +173,7 @@ fn map_arg(pid: Pid, registers: user_regs_struct, idx: usize, arg: SyscallArgTyp
         SyscallArgType::Int => SyscallArg::Int(value as i64),
         SyscallArgType::Str => SyscallArg::Str(read_string(pid, value)),
         SyscallArgType::Addr => SyscallArg::Addr(value as usize),
+        SyscallArgType::VecStr => SyscallArg::VecStr(read_string_vec(pid, value)),
     }
 }
 
