@@ -75,7 +75,7 @@ use comfy_table::presets::UTF8_BORDERS_ONLY;
 use comfy_table::CellAlignment::Right;
 use comfy_table::{Cell, ContentArrangement, Row, Table};
 use libc::user_regs_struct;
-use linux_personality::{personality, ADDR_NO_RANDOMIZE};
+use linux_personality::{personality, Personality};
 use nix::sys::ptrace::{self, Event};
 use nix::sys::signal::Signal;
 use nix::sys::wait::{wait, WaitStatus};
@@ -470,7 +470,8 @@ impl<W: Write> Tracer<W> {
 
 pub fn run_tracee(command: &[String], envs: &[String], username: &Option<String>) -> Result<()> {
     ptrace::traceme()?;
-    personality(ADDR_NO_RANDOMIZE).map_err(|_| anyhow!("Unable to set ADDR_NO_RANDOMIZE"))?;
+    personality(Personality::ADDR_NO_RANDOMIZE)
+        .map_err(|_| anyhow!("Unable to set ADDR_NO_RANDOMIZE"))?;
     let mut binary = command
         .get(0)
         .ok_or_else(|| anyhow!("No command"))?
