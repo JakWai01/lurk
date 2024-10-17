@@ -88,7 +88,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
 use style::StyleConfig;
 use syscalls::{Sysno, SysnoMap, SysnoSet};
-use users::get_user_by_name;
+use uzers::get_user_by_name;
 
 use crate::args::{Args, Filter};
 use crate::syscall_info::{RetCode, SyscallInfo};
