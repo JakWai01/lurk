@@ -311,6 +311,7 @@ macro_rules! syscall {
 const ADDR: Option<SyscallArgType> = Some(SyscallArgType::Addr);
 const INT: Option<SyscallArgType> = Some(SyscallArgType::Int);
 const STR: Option<SyscallArgType> = Some(SyscallArgType::Str);
+const VEC_STR: Option<SyscallArgType> = Some(SyscallArgType::VecStr);
 
 pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // DESC
@@ -426,7 +427,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // PROCESS
     syscall!(vfork, ADDR),
     // PROCESS
-    syscall!(execve, STR, STR, STR),
+    syscall!(execve, STR, VEC_STR, VEC_STR),
     // PROCESS
     syscall!(exit, INT),
     // PROCESS

@@ -117,6 +117,7 @@ impl Serialize for SyscallArgs {
                 SyscallArg::Int(v) => serde_json::to_value(v).unwrap(),
                 SyscallArg::Str(v) => serde_json::to_value(v).unwrap(),
                 SyscallArg::Addr(v) => Value::String(format!("{v:#x}")),
+                SyscallArg::VecStr(v) => serde_json::to_value(v).unwrap(),
             };
             seq.serialize_element(&value)?;
         }
@@ -161,6 +162,7 @@ impl Display for RetCode {
 pub enum SyscallArg {
     Int(i64),
     Str(String),
+    VecStr(Vec<String>),
     Addr(usize),
 }
 
@@ -177,6 +179,14 @@ impl SyscallArg {
                 write!(f, "{value}")
             }
             Self::Addr(v) => write!(f, "{v:#X}"),
+            Self::VecStr(v) => {
+                let out = format!("{:?}", v);
+                let value = match string_limit {
+                    Some(width) => trim_str(&out, width),
+                    None => out.into(),
+                };
+                write!(f, "{value}")
+            },
         }
     }
 }
