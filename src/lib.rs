@@ -55,12 +55,15 @@
 //! [`Tracer`]: crate::Tracer
 //! [`run_tracer`]: crate::Tracer::run_tracer
 
-#[deny(clippy::all, clippy::pedantic, clippy::format_push_string)]
+#[deny(clippy::pedantic, clippy::format_push_string)]
 // TODO: re-check the casting lints - they might indicate an issue
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     clippy::cast_precision_loss,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
     clippy::redundant_closure_for_method_calls,
     clippy::struct_excessive_bools
 )]
@@ -313,11 +316,11 @@ impl<W: Write> Tracer<W> {
             };
 
             table.add_row(vec![
-                Cell::new(&format!("{time_percent:.1}%")),
-                Cell::new(&format!("{}µs", time.as_micros())),
-                Cell::new(&format!("{:.1}ns", time.as_nanos() as f64 / calls as f64)),
-                Cell::new(&format!("{calls}")),
-                Cell::new(&format!("{fail}")),
+                Cell::new(format!("{time_percent:.1}%")),
+                Cell::new(format!("{}µs", time.as_micros())),
+                Cell::new(format!("{:.1}ns", time.as_nanos() as f64 / calls as f64)),
+                Cell::new(format!("{calls}")),
+                Cell::new(format!("{fail}")),
                 Cell::new(sysno.name()),
             ]);
         }
@@ -442,9 +445,10 @@ impl<W: Write> Tracer<W> {
         let reg = registers.a7;
         #[cfg(target_arch = "aarch64")]
         let reg = registers.regs[8];
-        (reg as u32)
-            .try_into()
-            .map_err(|_| anyhow!("Invalid syscall number {}", reg))
+
+        Ok(u32::try_from(reg)
+            .map_err(|_| anyhow!("Invalid syscall number {reg}"))?
+            .into())
     }
 
     // Issues a ptrace(PTRACE_GETREGS, ...) request and gets the corresponding syscall number (Sysno).
@@ -473,7 +477,7 @@ pub fn run_tracee(command: &[String], envs: &[String], username: &Option<String>
     personality(Personality::ADDR_NO_RANDOMIZE)
         .map_err(|_| anyhow!("Unable to set ADDR_NO_RANDOMIZE"))?;
     let mut binary = command
-        .get(0)
+        .first()
         .ok_or_else(|| anyhow!("No command"))?
         .to_string();
     if let Ok(bin) = fs::canonicalize(&binary) {
@@ -500,7 +504,7 @@ pub fn run_tracee(command: &[String], envs: &[String], username: &Option<String>
         }
     }
 
-    cmd.exec();
+    let _ = cmd.exec();
 
     Ok(())
 }

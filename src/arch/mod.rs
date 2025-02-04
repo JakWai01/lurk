@@ -151,14 +151,14 @@ pub fn escape_to_string(buf: &Vec<u8>) -> String {
     let mut string = String::new();
     for c in buf {
         let code = *c;
-        if 0x20 <= code && code <= 0x7f {
-            if code != b'\\' {
-                string.push(char::from(code))
+        if (0x20..=0x7f).contains(&code) {
+            if code == b'\\' {
+                string.push_str("\\\\");
             } else {
-                string.push_str("\\\\")
+                string.push(char::from(code));
             }
         } else {
-            string.push_str(format!("\\{:x}", c).as_str());
+            string.push_str(format!("\\{c:x}").as_str());
         }
     }
     string

@@ -280,7 +280,7 @@ pub static TRACE_MEMORY: SysnoSet = SysnoSet::new(&[
     // strace/src/linux/generic/syscallent-common.h
     io_uring_register,
     set_mempolicy_home_node,
-    map_shadow_stack
+    map_shadow_stack,
 ]);
 
 pub static TRACE_STAT: SysnoSet = SysnoSet::new(&[fstatat, fstat, statx]);
