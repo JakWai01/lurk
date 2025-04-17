@@ -360,7 +360,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     syscall!(pipe, INT, INT),
     // DESC
     syscall!(select, INT, ADDR, ADDR, ADDR, ADDR),
-    syscall!(sched_yield, ADDR),
+    syscall!(sched_yield),
     // MEMORY
     syscall!(mremap, ADDR, INT, INT, INT, ADDR),
     // MEMORY
