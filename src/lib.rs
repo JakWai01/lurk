@@ -142,6 +142,7 @@ impl<W: Write> Tracer<W> {
         start_times.insert(self.pid, None);
 
         let mut options_initialized = false;
+        let mut entry_regs = None;
 
         loop {
             let status = wait()?;
@@ -167,7 +168,7 @@ impl<W: Write> Tracer<W> {
                     // are stopped in PtraceSyscall and not here, which means if we get a SIGTRAP here,
                     // it's because the child called exec.
                     if signal == Signal::SIGTRAP {
-                        self.log_standard_syscall(pid, None, None)?;
+                        self.log_standard_syscall(pid, None, None, None)?;
                         self.issue_ptrace_syscall_request(pid, None)?;
                         continue;
                     }
@@ -217,7 +218,7 @@ impl<W: Write> Tracer<W> {
                     // We stop at the PTRACE_EVENT_EXIT event because of the PTRACE_O_TRACEEXIT option.
                     // We do this to properly catch and log exit-family syscalls, which do not have an PTRACE_SYSCALL_INFO_EXIT event.
                     if code == Event::PTRACE_EVENT_EXIT as i32 && self.is_exit_syscall(pid)? {
-                        self.log_standard_syscall(pid, None, None)?;
+                        self.log_standard_syscall(pid, None, None, None)?;
                     }
 
                     self.issue_ptrace_syscall_request(pid, None)?;
@@ -237,10 +238,11 @@ impl<W: Write> Tracer<W> {
                     // We only want to log regular syscalls on exit
                     if let Some(syscall_start_time) = start_times.get_mut(&pid) {
                         if event == 2 {
-                            self.log_standard_syscall(pid, *syscall_start_time, timestamp)?;
+                            self.log_standard_syscall(pid, entry_regs, *syscall_start_time, timestamp)?;
                             *syscall_start_time = None;
                         } else {
                             *syscall_start_time = timestamp;
+                            entry_regs = Some(self.get_registers(pid)?);
                         }
                     } else {
                         return Err(anyhow!("Unable to get start time for tracee {}", pid));
@@ -368,6 +370,7 @@ impl<W: Write> Tracer<W> {
     fn log_standard_syscall(
         &mut self,
         pid: Pid,
+        entry_regs: Option<user_regs_struct>,
         syscall_start_time: Option<SystemTime>,
         syscall_end_time: Option<SystemTime>,
     ) -> Result<()> {
@@ -384,7 +387,7 @@ impl<W: Write> Tracer<W> {
                 #[cfg(target_arch = "riscv64")]
                 let code = RetCode::from_raw(registers.a7);
                 #[cfg(target_arch = "aarch64")]
-                let code: RetCode = RetCode::from_raw(registers.regs[8]);
+                let code = RetCode::from_raw(registers.regs[0]);
                 match code {
                     RetCode::Err(_) => self.syscalls_fail[syscall_number] += 1,
                     _ => self.syscalls_pass[syscall_number] += 1,
@@ -392,6 +395,8 @@ impl<W: Write> Tracer<W> {
                 code
             }
         };
+
+        let registers = entry_regs.unwrap_or(registers);
 
         if self.filter.matches(syscall_number, ret_code) {
             let elapsed = syscall_start_time.map_or(Duration::default(), |start_time| {
