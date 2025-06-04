@@ -236,10 +236,17 @@ impl<W: Write> Tracer<W> {
 
                     // We only want to log regular syscalls on exit
                     if let Some(syscall_start_time) = start_times.get_mut(&pid) {
+                        let (syscall_number, _) = self.parse_register_data(pid)?;
                         if event == 2 {
-                            self.log_standard_syscall(pid, *syscall_start_time, timestamp)?;
+                            if syscall_number != Sysno::execve {
+                                self.log_standard_syscall(pid, *syscall_start_time, timestamp)?;
+                            }
                             *syscall_start_time = None;
                         } else {
+                            // execve arguments are already gone at exit so we log on enter
+                            if syscall_number == Sysno::execve {
+                                self.log_standard_syscall(pid, *syscall_start_time, timestamp)?;
+                            }
                             *syscall_start_time = timestamp;
                         }
                     } else {
@@ -377,6 +384,7 @@ impl<W: Write> Tracer<W> {
         // -38 is ENOSYS which is put into RAX as a default return value by the kernel's syscall entry code.
         // In order to not pollute the summary with this false positive, avoid exit-family syscalls from being counted (same behaviour as strace).
         let ret_code = match syscall_number {
+            Sysno::execve => RetCode::from_raw(0),
             Sysno::exit | Sysno::exit_group => RetCode::from_raw(0),
             _ => {
                 #[cfg(target_arch = "x86_64")]
