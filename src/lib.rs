@@ -238,7 +238,12 @@ impl<W: Write> Tracer<W> {
                     // We only want to log regular syscalls on exit
                     if let Some(syscall_start_time) = start_times.get_mut(&pid) {
                         if event == 2 {
-                            self.log_standard_syscall(pid, entry_regs, *syscall_start_time, timestamp)?;
+                            self.log_standard_syscall(
+                                pid,
+                                entry_regs,
+                                *syscall_start_time,
+                                timestamp,
+                            )?;
                             *syscall_start_time = None;
                         } else {
                             *syscall_start_time = timestamp;
