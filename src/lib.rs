@@ -379,7 +379,12 @@ impl<W: Write> Tracer<W> {
         syscall_start_time: Option<SystemTime>,
         syscall_end_time: Option<SystemTime>,
     ) -> Result<()> {
-        let (syscall_number, registers) = self.parse_register_data(pid)?;
+        let register_data = self.parse_register_data(pid);
+        if let Err(e) = register_data {
+            eprintln!("{e}");
+            return Ok(());
+        }
+        let (syscall_number, registers) = register_data.unwrap();
 
         // Theres no PTRACE_SYSCALL_INFO_EXIT for an exit-family syscall, hence ret_code will always be 0xffffffffffffffda (which is -38)
         // -38 is ENOSYS which is put into RAX as a default return value by the kernel's syscall entry code.
