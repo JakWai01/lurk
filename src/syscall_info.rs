@@ -4,7 +4,6 @@ use libc::{c_ulonglong, user_regs_struct};
 use nix::unistd::Pid;
 use serde::ser::{SerializeMap, SerializeSeq};
 use serde::Serialize;
-use serde::__private::ser::FlatMapSerializer;
 use serde_json::Value;
 use std::borrow::Cow::{self, Borrowed, Owned};
 use std::fmt::{Debug, Display};
@@ -100,7 +99,11 @@ impl Serialize for SyscallInfo {
         map.serialize_entry("num", &self.syscall)?;
         map.serialize_entry("syscall", &self.syscall.to_string())?;
         map.serialize_entry("args", &self.args)?;
-        Serialize::serialize(&self.result, FlatMapSerializer(&mut map))?;
+        match self.result {
+            RetCode::Ok(value) => map.serialize_entry("success", &value)?,
+            RetCode::Err(value) => map.serialize_entry("error", &value)?,
+            RetCode::Address(value) => map.serialize_entry("result", &value)?,
+        }
         map.serialize_entry("duration", &self.duration.as_secs_f64())?;
         map.end()
     }
@@ -124,13 +127,10 @@ impl Serialize for SyscallArgs {
     }
 }
 
-#[derive(Debug, Copy, Clone, Serialize)]
+#[derive(Debug, Copy, Clone)]
 pub enum RetCode {
-    #[serde(rename = "success")]
     Ok(i32),
-    #[serde(rename = "error")]
     Err(i32),
-    #[serde(rename = "result")]
     Address(usize),
 }
 
