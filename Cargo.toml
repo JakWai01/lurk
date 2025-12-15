@@ -40,11 +40,11 @@ anyhow = "1"
 byteorder = "1"
 clap = { version = "4", features = ["derive"] }
 comfy-table = "7"
-console = "0.15.8"
+console = "0.16.1"
 libc = "0.2"
 nix = { version = "0.30.1", features = ["personality", "ptrace", "signal"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-syscalls = { version = "0.6.14", features = ["full"] }
+syscalls = { version = "0.7.0", features = ["full"] }
 uzers = "0.12"
