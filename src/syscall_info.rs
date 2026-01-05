@@ -181,7 +181,7 @@ impl SyscallArg {
     }
 }
 
-fn trim_str(string: &str, limit: usize) -> Cow<str> {
+fn trim_str(string: &str, limit: usize) -> Cow<'_, str> {
     match string.chars().as_str().get(..limit) {
         None => Borrowed(string),
         Some(s) => Owned(format!("{s}...")),
