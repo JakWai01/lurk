@@ -1,19 +1,12 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use console::Style;
-use lurk_cli::{args::Args, style::StyleConfig, Tracer};
-use nix::unistd::{fork, ForkResult};
+use lurk_cli::{args::Args, spawn_tracee, style::StyleConfig, Tracer};
 use std::io;
 
 fn main() -> Result<()> {
     let command = String::from("/usr/bin/ls");
 
-    let pid = match unsafe { fork() } {
-        Ok(ForkResult::Child) => {
-            return lurk_cli::run_tracee(&[command], &[], &None);
-        }
-        Ok(ForkResult::Parent { child }) => child,
-        Err(err) => bail!("fork() failed: {err}"),
-    };
+    let pid = spawn_tracee(&[command], &[], &None)?;
 
     let args = Args::default();
     let output = io::stdout();
@@ -26,5 +19,7 @@ fn main() -> Result<()> {
         use_colors: true,
     };
 
-    Tracer::new(pid, args, output, style)?.run_tracer()
+    let mut tracer = Tracer::new(pid, args, output, style)?;
+    tracer.set_seized_spawn();
+    tracer.run_tracer()
 }

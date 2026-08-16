@@ -1,12 +1,22 @@
+#![allow(
+    clippy::cast_sign_loss,
+    clippy::type_complexity,
+    clippy::used_underscore_binding
+)]
+
 use crate::arch::SyscallArgType;
+#[cfg(target_arch = "riscv64")]
 use libc::{c_ulonglong, user_regs_struct};
 use std::ops::Index;
 use syscalls::riscv64::Sysno;
+#[cfg(target_arch = "riscv64")]
 use syscalls::SysnoSet;
 
 #[allow(clippy::enum_glob_use)]
+#[cfg(target_arch = "riscv64")]
 use syscalls::riscv64::Sysno::*;
 
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_DESC: SysnoSet = SysnoSet::new(&[
     // strace/src/linux/64/syscallent.h
     fsetxattr,
@@ -120,6 +130,7 @@ pub static TRACE_DESC: SysnoSet = SysnoSet::new(&[
     process_mrelease,
 ]);
 
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_FILE: SysnoSet = SysnoSet::new(&[
     // strace/src/linux/64/syscallent.h
     setxattr,
@@ -172,10 +183,12 @@ pub static TRACE_FILE: SysnoSet = SysnoSet::new(&[
     mount_setattr,
 ]);
 
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_IPC: SysnoSet = SysnoSet::new(&[
     msgget, msgctl, msgrcv, msgsnd, semget, semctl, semtimedop, semop, shmget, shmctl, shmat, shmdt,
 ]);
 
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_NETWORK: SysnoSet = SysnoSet::new(&[
     sendfile,
     socket,
@@ -198,6 +211,7 @@ pub static TRACE_NETWORK: SysnoSet = SysnoSet::new(&[
     sendmmsg,
 ]);
 
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_PROCESS: SysnoSet = SysnoSet::new(&[
     // strace/src/linux/64/syscallent.h
     exit,
@@ -217,12 +231,10 @@ pub static TRACE_PROCESS: SysnoSet = SysnoSet::new(&[
     clone3,
 ]);
 
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_SIGNAL: SysnoSet = SysnoSet::new(&[
     // strace/src/linux/64/syscallent.h
-    statfs,
-    fstatfs,
     signalfd4,
-    fstat,
     kill,
     tkill,
     tgkill,
@@ -234,15 +246,13 @@ pub static TRACE_SIGNAL: SysnoSet = SysnoSet::new(&[
     rt_sigtimedwait,
     rt_sigqueueinfo,
     rt_sigreturn,
-    execve,
     rt_tgsigqueueinfo,
-    execveat,
-    statx,
     // strace/src/linux/generic/syscallent-common.h
     pidfd_send_signal,
     io_uring_enter,
 ]);
 
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_MEMORY: SysnoSet = SysnoSet::new(&[
     // strace/src/linux/64/syscallent.h
     io_setup,
@@ -276,46 +286,32 @@ pub static TRACE_MEMORY: SysnoSet = SysnoSet::new(&[
     // riscv_flush_icache,
 ]);
 
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_STAT: SysnoSet = SysnoSet::new(&[fstat, statx]);
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_LSTAT: SysnoSet = SysnoSet::new(&[]);
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_FSTAT: SysnoSet = SysnoSet::new(&[fstat, statx]);
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_STAT_LIKE: SysnoSet = SysnoSet::new(&[fstat, statx]);
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_STATFS: SysnoSet = SysnoSet::new(&[statfs, fstatfs]);
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_FSTATFS: SysnoSet = SysnoSet::new(&[fstatfs]);
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_STATFS_LIKE: SysnoSet = SysnoSet::new(&[statfs, fstatfs]);
 
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_PURE: SysnoSet =
     SysnoSet::new(&[getpid, getppid, getuid, geteuid, getgid, getegid, gettid]);
 
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_CREDS: SysnoSet = SysnoSet::new(&[
-    capget,
-    capset,
-    clock_settime,
-    clock_gettime,
-    clock_getres,
-    setregid,
-    setgid,
-    setreuid,
-    setuid,
-    setresuid,
-    getresuid,
-    setresgid,
-    getresgid,
-    setfsuid,
-    setfsgid,
-    getgroups,
-    setgroups,
-    prctl,
-    gettimeofday,
-    settimeofday,
-    adjtimex,
-    getuid,
-    geteuid,
-    getgid,
-    getegid,
-    clock_adjtime,
+    capget, capset, setregid, setgid, setreuid, setuid, setresuid, getresuid, setresgid, getresgid,
+    setfsuid, setfsgid, getgroups, setgroups, prctl, getuid, geteuid, getgid, getegid,
 ]);
 
+#[cfg(target_arch = "riscv64")]
 pub static TRACE_CLOCK: SysnoSet = SysnoSet::new(&[
     clock_settime,
     clock_gettime,
@@ -354,6 +350,13 @@ const ADDR: Option<SyscallArgType> = Some(SyscallArgType::Addr);
 const INT: Option<SyscallArgType> = Some(SyscallArgType::Int);
 const STR: Option<SyscallArgType> = Some(SyscallArgType::Str);
 const STRV: Option<SyscallArgType> = Some(SyscallArgType::StrArray);
+const STRVS: Option<SyscallArgType> = Some(SyscallArgType::StrArraySummary);
+const IN1: Option<SyscallArgType> = Some(SyscallArgType::InputBuffer(1));
+const IN2: Option<SyscallArgType> = Some(SyscallArgType::InputBuffer(2));
+const IN3: Option<SyscallArgType> = Some(SyscallArgType::InputBuffer(3));
+const OUT1: Option<SyscallArgType> = Some(SyscallArgType::OutputBuffer(1));
+const OUT2: Option<SyscallArgType> = Some(SyscallArgType::OutputBuffer(2));
+const OUT3: Option<SyscallArgType> = Some(SyscallArgType::OutputBuffer(3));
 
 pub struct Riscv64Syscalls {
     _0: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 38],
@@ -392,20 +395,20 @@ pub static SYSCALLS: Riscv64Syscalls = Riscv64Syscalls {
         syscall!(io_submit, INT, INT, ADDR),
         syscall!(io_cancel, INT, ADDR, ADDR),
         syscall!(io_getevents, INT, INT, INT, ADDR, ADDR),
-        syscall!(setxattr, STR, STR, ADDR, INT, INT),
-        syscall!(lsetxattr, STR, STR, ADDR, INT, INT),
-        syscall!(fsetxattr, INT, STR, ADDR, INT, INT),
-        syscall!(getxattr, STR, STR, ADDR, INT),
-        syscall!(lgetxattr, STR, STR, ADDR, INT),
-        syscall!(fgetxattr, INT, STR, ADDR, INT),
-        syscall!(listxattr, STR, STR, INT),
-        syscall!(llistxattr, STR, STR, INT),
-        syscall!(flistxattr, INT, STR, INT),
+        syscall!(setxattr, STR, STR, IN3, INT, INT),
+        syscall!(lsetxattr, STR, STR, IN3, INT, INT),
+        syscall!(fsetxattr, INT, STR, IN3, INT, INT),
+        syscall!(getxattr, STR, STR, OUT3, INT),
+        syscall!(lgetxattr, STR, STR, OUT3, INT),
+        syscall!(fgetxattr, INT, STR, OUT3, INT),
+        syscall!(listxattr, STR, OUT2, INT),
+        syscall!(llistxattr, STR, OUT2, INT),
+        syscall!(flistxattr, INT, OUT2, INT),
         syscall!(removexattr, STR, STR),
         syscall!(lremovexattr, STR, STR),
         syscall!(fremovexattr, INT, STR),
-        syscall!(getcwd, STR, INT),
-        syscall!(lookup_dcookie, INT, STR, INT),
+        syscall!(getcwd, OUT1, INT),
+        syscall!(lookup_dcookie, INT, OUT2, INT),
         syscall!(eventfd2, INT, INT),
         syscall!(epoll_create1, INT),
         syscall!(epoll_ctl, INT, INT, INT, ADDR),
@@ -451,12 +454,12 @@ pub static SYSCALLS: Riscv64Syscalls = Riscv64Syscalls {
         syscall!(quotactl, INT, STR, INT, ADDR),
         syscall!(getdents64, INT, ADDR, INT),
         syscall!(lseek, INT, INT, INT),
-        syscall!(read, INT, STR, INT),
-        syscall!(write, INT, STR, INT),
+        syscall!(read, INT, OUT2, INT),
+        syscall!(write, INT, IN2, INT),
         syscall!(readv, INT, ADDR, INT),
         syscall!(writev, INT, ADDR, INT),
-        syscall!(pread64, INT, STR, INT, INT),
-        syscall!(pwrite64, INT, STR, INT, INT),
+        syscall!(pread64, INT, OUT2, INT, INT),
+        syscall!(pwrite64, INT, IN2, INT, INT),
         syscall!(preadv, INT, ADDR, INT, INT, INT),
         syscall!(pwritev, INT, ADDR, INT, INT, INT),
         syscall!(sendfile, INT, INT, ADDR, INT),
@@ -466,7 +469,7 @@ pub static SYSCALLS: Riscv64Syscalls = Riscv64Syscalls {
         syscall!(vmsplice, INT, ADDR, INT, INT),
         syscall!(splice, INT, ADDR, INT, ADDR, INT, INT),
         syscall!(tee, INT, INT, INT, INT),
-        syscall!(readlinkat, INT, STR, STR, INT),
+        syscall!(readlinkat, INT, STR, OUT3, INT),
     ],
     _80: [
         syscall!(fstat, INT, ADDR),
@@ -505,7 +508,7 @@ pub static SYSCALLS: Riscv64Syscalls = Riscv64Syscalls {
         syscall!(clock_gettime, INT, ADDR),
         syscall!(clock_getres, INT, ADDR),
         syscall!(clock_nanosleep, INT, INT, ADDR, ADDR),
-        syscall!(syslog, INT, STR, INT),
+        syscall!(syslog, INT, OUT2, INT),
         syscall!(ptrace, INT, INT, INT, INT),
         syscall!(sched_setparam, INT, ADDR),
         syscall!(sched_setscheduler, INT, INT, ADDR),
@@ -550,8 +553,8 @@ pub static SYSCALLS: Riscv64Syscalls = Riscv64Syscalls {
         syscall!(getgroups, INT, ADDR),
         syscall!(setgroups, INT, ADDR),
         syscall!(uname, ADDR),
-        syscall!(sethostname, STR, INT),
-        syscall!(setdomainname, STR, INT),
+        syscall!(sethostname, IN1, INT),
+        syscall!(setdomainname, IN1, INT),
         syscall!(getrlimit, INT, ADDR),
         syscall!(setrlimit, INT, ADDR),
         syscall!(getrusage, INT, ADDR),
@@ -571,8 +574,8 @@ pub static SYSCALLS: Riscv64Syscalls = Riscv64Syscalls {
         syscall!(sysinfo, ADDR),
         syscall!(mq_open, STR, INT, INT, ADDR),
         syscall!(mq_unlink, STR),
-        syscall!(mq_timedsend, INT, STR, INT, INT, ADDR),
-        syscall!(mq_timedreceive, INT, STR, INT, ADDR, ADDR),
+        syscall!(mq_timedsend, INT, IN2, INT, INT, ADDR),
+        syscall!(mq_timedreceive, INT, OUT2, INT, ADDR, ADDR),
         syscall!(mq_notify, INT, ADDR),
         syscall!(mq_getsetattr, INT, ADDR, ADDR),
         syscall!(msgget, INT, INT),
@@ -595,10 +598,10 @@ pub static SYSCALLS: Riscv64Syscalls = Riscv64Syscalls {
         syscall!(connect, INT, ADDR, INT),
         syscall!(getsockname, INT, ADDR, ADDR),
         syscall!(getpeername, INT, ADDR, ADDR),
-        syscall!(sendto, INT, ADDR, INT, INT, ADDR, INT),
-        syscall!(recvfrom, INT, ADDR, INT, INT, ADDR, ADDR),
-        syscall!(setsockopt, INT, INT, INT, STR, INT),
-        syscall!(getsockopt, INT, INT, INT, STR, ADDR),
+        syscall!(sendto, INT, IN2, INT, INT, ADDR, INT),
+        syscall!(recvfrom, INT, OUT2, INT, INT, ADDR, ADDR),
+        syscall!(setsockopt, INT, INT, INT, ADDR, INT),
+        syscall!(getsockopt, INT, INT, INT, ADDR, ADDR),
         syscall!(shutdown, INT, INT),
         syscall!(sendmsg, INT, ADDR, INT),
         syscall!(recvmsg, INT, ADDR, INT),
@@ -606,11 +609,11 @@ pub static SYSCALLS: Riscv64Syscalls = Riscv64Syscalls {
         syscall!(brk, INT),
         syscall!(munmap, INT, INT),
         syscall!(mremap, INT, INT, INT, INT, INT),
-        syscall!(add_key, STR, STR, ADDR, INT, INT),
+        syscall!(add_key, STR, STR, IN3, INT, INT),
         syscall!(request_key, STR, STR, STR, INT),
         syscall!(keyctl, INT, INT, INT, INT, INT),
         syscall!(clone, INT, INT, ADDR, INT, ADDR),
-        syscall!(execve, STR, STRV, STRV),
+        syscall!(execve, STR, STRV, STRVS),
         syscall!(mmap, ADDR, INT, INT, INT, INT, INT),
         syscall!(fadvise64, INT, INT, INT, INT),
         syscall!(swapon, STR, INT),
@@ -655,10 +658,10 @@ pub static SYSCALLS: Riscv64Syscalls = Riscv64Syscalls {
         syscall!(sched_getattr, INT, ADDR, INT, INT),
         syscall!(renameat2, INT, STR, INT, STR, INT),
         syscall!(seccomp, INT, INT, ADDR),
-        syscall!(getrandom, STR, INT, INT),
+        syscall!(getrandom, OUT1, INT, INT),
         syscall!(memfd_create, STR, INT),
         syscall!(bpf, INT, ADDR, INT),
-        syscall!(execveat, INT, STR, STRV, STRV, INT),
+        syscall!(execveat, INT, STR, STRV, STRVS, INT),
         syscall!(userfaultfd, INT),
         syscall!(membarrier, INT, INT, INT),
         syscall!(mlock2, INT, INT, INT),
@@ -705,6 +708,7 @@ pub static SYSCALLS: Riscv64Syscalls = Riscv64Syscalls {
     ],
 };
 
+#[cfg(target_arch = "riscv64")]
 pub fn get_arg_value(registers: user_regs_struct, i: usize) -> c_ulonglong {
     match i {
         0 => registers.a0,

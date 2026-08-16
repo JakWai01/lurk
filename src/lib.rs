@@ -1,62 +1,9 @@
-//! lurk is a pretty (simple) alternative to strace.
+//! A small Linux system-call tracer.
 //!
-//! ## Installation
-//!
-//! Add the following dependencies to your `Cargo.toml`
-//!
-//! ```toml
-//! [dependencies]
-//! lurk-cli = "0.3.6"
-//! nix = { version = "0.27.1", features = ["ptrace", "signal"] }
-//! console = "0.15.8"
-//! ```
-//!
-//! ## Usage
-//!
-//! First crate a tracee using [`run_tracee`] method. Then you can construct a [`Tracer`]
-//! struct to trace the system calls via calling [`run_tracer`].
-//!
-//! ## Examples
-//!
-//! ```rust
-//! use anyhow::{bail, Result};
-//! use console::Style;
-//! use lurk_cli::{args::Args, style::StyleConfig, Tracer};
-//! use nix::unistd::{fork, ForkResult};
-//! use std::io;
-//!
-//! fn main() -> Result<()> {
-//!     let command = String::from("/usr/bin/ls");
-//!
-//!     let pid = match unsafe { fork() } {
-//!         Ok(ForkResult::Child) => {
-//!             return lurk_cli::run_tracee(&[command], &[], &None);
-//!         }
-//!         Ok(ForkResult::Parent { child }) => child,
-//!         Err(err) => bail!("fork() failed: {err}"),
-//!     };
-//!
-//!     let args = Args::default();
-//!     let output = io::stdout();
-//!     let style = StyleConfig {
-//!         pid: Style::new().cyan(),
-//!         syscall: Style::new().white().bold(),
-//!         success: Style::new().green(),
-//!         error: Style::new().red(),
-//!         result: Style::new().yellow(),
-//!         use_colors: true,
-//!     };
-//!
-//!     Tracer::new(pid, args, output, style)?.run_tracer()
-//! }
-//! ```
-//!
-//! [`run_tracee`]: crate::run_tracee
-//! [`Tracer`]: crate::Tracer
-//! [`run_tracer`]: crate::Tracer::run_tracer
+//! [`spawn_tracee`] is the preferred launcher.  [`run_tracee`] remains for
+//! compatibility with callers that perform the fork themselves.
 
 #[deny(clippy::pedantic, clippy::format_push_string)]
-// TODO: re-check the casting lints - they might indicate an issue
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -72,29 +19,32 @@ pub mod args;
 pub mod style;
 pub mod syscall_info;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use comfy_table::modifiers::UTF8_ROUND_CORNERS;
 use comfy_table::presets::UTF8_BORDERS_ONLY;
 use comfy_table::CellAlignment::Right;
 use comfy_table::{Cell, ContentArrangement, Row, Table};
 use libc::user_regs_struct;
-use nix::sys::personality::{self, Persona};
 use nix::sys::ptrace::{self, Event};
-use nix::sys::signal::Signal;
-use nix::sys::wait::{wait, WaitStatus};
-use nix::unistd::Pid;
-use std::collections::HashMap;
+use nix::sys::signal::{kill, Signal};
+use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+use nix::unistd::{fork, ForkResult, Pid};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ffi::{CString, OsStr, OsString};
 use std::fs;
 use std::io::Write;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
-use std::time::{Duration, SystemTime};
-use style::StyleConfig;
-use syscalls::{Sysno, SysnoMap, SysnoSet};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, Instant};
+use syscalls::Sysno;
 use uzers::get_user_by_name;
 
 use crate::args::{Args, Filter};
-use crate::syscall_info::{RetCode, SyscallArgs, SyscallInfo};
+use crate::style::StyleConfig;
+use crate::syscall_info::{RetCode, SyscallArgs, SyscallId, SyscallInfo};
 
 const STRING_LIMIT: usize = 32;
 
@@ -103,13 +53,112 @@ pub struct Tracer<W: Write> {
     args: Args,
     string_limit: Option<usize>,
     filter: Filter,
-    syscalls_time: SysnoMap<Duration>,
-    syscalls_pass: SysnoMap<u64>,
-    syscalls_fail: SysnoMap<u64>,
+    syscall_stats: HashMap<SyscallId, SyscallStats>,
     style_config: StyleConfig,
     output: W,
-    // If enabled, count and collapse repeated failing execve attempts per pid
-    exec_retry_counts: std::collections::HashMap<Pid, usize>,
+    exec_retry_counts: HashMap<Pid, usize>,
+    initial_tracees: Vec<(Pid, StartupStop)>,
+}
+
+#[derive(Debug, Default)]
+struct SyscallStats {
+    time: Duration,
+    pass: u64,
+    fail: u64,
+}
+
+#[derive(Debug)]
+struct SyscallEntry {
+    syscall: SyscallId,
+    registers: user_regs_struct,
+    args: SyscallArgs,
+    started_wall: Instant,
+    started_system: Duration,
+}
+
+#[derive(Debug, Default)]
+struct TraceeState {
+    entry: Option<SyscallEntry>,
+    startup_stop: Option<StartupStop>,
+    seized: bool,
+    fallback_needs_sync: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StartupStop {
+    LegacySigstop,
+    SeizedLaunch,
+    SeizedInterrupt,
+    AutoAttachedChild,
+}
+
+enum SyscallStop {
+    Entry {
+        raw: u64,
+        arch: Option<u32>,
+        args: Option<[u64; 6]>,
+    },
+    Exit(i64, bool),
+    Unknown,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PtraceSyscallEntry {
+    nr: u64,
+    args: [u64; 6],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PtraceSyscallExit {
+    sval: i64,
+    is_error: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PtraceSyscallSeccomp {
+    nr: u64,
+    args: [u64; 6],
+    ret_data: u32,
+    reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+union PtraceSyscallData {
+    entry: PtraceSyscallEntry,
+    exit: PtraceSyscallExit,
+    seccomp: PtraceSyscallSeccomp,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PtraceSyscallInfo {
+    op: u8,
+    reserved: u8,
+    flags: u16,
+    arch: u32,
+    instruction_pointer: u64,
+    stack_pointer: u64,
+    data: PtraceSyscallData,
+}
+
+/// How the original tracee terminated.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TraceOutcome {
+    Exited(i32),
+    Signaled(Signal),
+}
+
+impl TraceOutcome {
+    pub fn exit_code(self) -> i32 {
+        match self {
+            Self::Exited(code) => code,
+            Self::Signaled(signal) => 128 + signal as i32,
+        }
+    }
 }
 
 impl<W: Write> Tracer<W> {
@@ -123,14 +172,11 @@ impl<W: Write> Tracer<W> {
                 Some(args.string_limit.unwrap_or(STRING_LIMIT))
             },
             args,
-            syscalls_time: SysnoMap::from_iter(
-                SysnoSet::all().iter().map(|v| (v, Duration::default())),
-            ),
-            syscalls_pass: SysnoMap::from_iter(SysnoSet::all().iter().map(|v| (v, 0))),
-            syscalls_fail: SysnoMap::from_iter(SysnoSet::all().iter().map(|v| (v, 0))),
+            syscall_stats: HashMap::new(),
             style_config,
             output,
             exec_retry_counts: HashMap::new(),
+            initial_tracees: vec![(pid, StartupStop::LegacySigstop)],
         })
     }
 
@@ -138,22 +184,57 @@ impl<W: Write> Tracer<W> {
         self.output = output;
     }
 
-    #[allow(clippy::too_many_lines)]
+    /// Mark the original tracee as a child launched with `PTRACE_SEIZE`.
+    pub fn set_seized_spawn(&mut self) {
+        self.initial_tracees = vec![(self.pid, StartupStop::SeizedLaunch)];
+    }
+
+    /// Register all threads seized while attaching to an existing process.
+    pub fn set_attached_tracees(&mut self, tracees: Vec<Pid>) {
+        self.initial_tracees = tracees
+            .into_iter()
+            .map(|pid| (pid, StartupStop::SeizedInterrupt))
+            .collect();
+    }
+
     pub fn run_tracer(&mut self) -> Result<()> {
-        // Create a hashmap to track entry and exit times across all forked processes individually.
-        let mut start_times = HashMap::<Pid, Option<SystemTime>>::new();
-        // Store pre-parsed args for special syscalls (execve/execveat) captured at syscall entry
-        let mut pending_args = HashMap::<Pid, Option<SyscallArgs>>::new();
-        start_times.insert(self.pid, None);
-        pending_args.insert(self.pid, None);
+        self.run_tracer_with_outcome().map(drop)
+    }
 
+    #[allow(clippy::too_many_lines)]
+    pub fn run_tracer_with_outcome(&mut self) -> Result<TraceOutcome> {
+        let mut states: HashMap<_, _> = self
+            .initial_tracees
+            .iter()
+            .map(|(pid, startup_stop)| {
+                (
+                    *pid,
+                    TraceeState {
+                        startup_stop: Some(*startup_stop),
+                        seized: !matches!(startup_stop, StartupStop::LegacySigstop),
+                        fallback_needs_sync: matches!(startup_stop, StartupStop::SeizedInterrupt),
+                        ..TraceeState::default()
+                    },
+                )
+            })
+            .collect();
         let mut options_initialized = false;
-        let mut entry_regs = None;
+        let mut root_outcome = None;
 
-        loop {
-            let status = wait()?;
+        while !states.is_empty() {
+            let (status, task_system_time, observed_at) = match wait_for_tracee() {
+                Ok(observation) => observation,
+                Err(nix::errno::Errno::ECHILD) if states.is_empty() => break,
+                Err(error) => return Err(error.into()),
+            };
 
-            if !options_initialized {
+            let stopped = matches!(
+                &status,
+                WaitStatus::Stopped(_, _)
+                    | WaitStatus::PtraceEvent(_, _, _)
+                    | WaitStatus::PtraceSyscall(_)
+            );
+            if !options_initialized && status.pid() == Some(self.pid) && stopped {
                 if self.args.follow_forks {
                     arch::ptrace_init_options_fork(self.pid)?;
                 } else {
@@ -163,198 +244,124 @@ impl<W: Write> Tracer<W> {
             }
 
             match status {
-                // `WIFSTOPPED(status), signal is WSTOPSIG(status)
                 WaitStatus::Stopped(pid, signal) => {
-                    // There are three reasons why a child might stop with SIGTRAP:
-                    // 1) syscall entry
-                    // 2) syscall exit
-                    // 3) child calls exec
-                    //
-                    // Because we are tracing with PTRACE_O_TRACESYSGOOD, syscall entry and syscall exit
-                    // are stopped in PtraceSyscall and not here, which means if we get a SIGTRAP here,
-                    // it's because the child called exec.
-                    if signal == Signal::SIGTRAP {
-                        // At exec the address space may change; prefer registers captured
-                        // at the previous syscall entry (if present) so we can read argv/envp
-                        // from the original address space. Consume `entry_regs` if set.
-                        let regs = entry_regs.take();
-                        let pre = pending_args.remove(&pid).unwrap_or(None);
-
-                        // If we don't have entry registers (e.g. first-stop), try a best-effort
-                        // parse from the current registers before falling back to pointer hex.
-                        if regs.is_none() {
-                            if let Ok(cur_regs) = self.get_registers(pid) {
-                                if let Ok(sysno) = self.get_syscall(cur_regs) {
-                                    if sysno == Sysno::execve || sysno == Sysno::execveat {
-                                        // parse args now
-                                        let args_now = arch::parse_args(pid, sysno, cur_regs);
-                                        self.log_standard_syscall(
-                                            pid,
-                                            Some(cur_regs),
-                                            Some(args_now),
-                                            None,
-                                            None,
-                                        )?;
-                                        self.issue_ptrace_syscall_request(pid, None)?;
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-
-                        self.log_standard_syscall(pid, regs, pre, None, None)?;
+                    let state = states.entry(pid).or_default();
+                    if is_expected_plain_startup_stop(state.startup_stop, signal) {
+                        state.startup_stop = None;
                         self.issue_ptrace_syscall_request(pid, None)?;
                         continue;
                     }
 
-                    // If we trace with PTRACE_O_TRACEFORK, PTRACE_O_TRACEVFORK, and PTRACE_O_TRACECLONE,
-                    // a created child of our tracee will stop with SIGSTOP.
-                    // If our tracee creates children of their own, we want to trace their syscall times with a new value.
-                    if signal == Signal::SIGSTOP {
-                        if self.args.follow_forks {
-                            start_times.insert(pid, None);
-
-                            if !self.args.summary_only {
-                                writeln!(&mut self.output, "Attaching to child {}", pid,)?;
+                    match ptrace::getsiginfo(pid) {
+                        Ok(_) => self.issue_ptrace_syscall_request(pid, Some(signal))?,
+                        Err(nix::errno::Errno::EINVAL) if is_stopping_signal(signal) => {
+                            if !state.seized || !listen_tracee(pid)? {
+                                self.issue_ptrace_syscall_request(pid, None)?;
                             }
                         }
-
-                        self.issue_ptrace_syscall_request(pid, None)?;
-                        continue;
+                        Err(nix::errno::Errno::ESRCH) => {}
+                        Err(_) => self.issue_ptrace_syscall_request(pid, Some(signal))?,
                     }
-
-                    // The SIGCHLD signal is sent to a process when a child process terminates, interrupted, or resumes after being interrupted
-                    // This means, that if our tracee forked and said fork exits before the parent, the parent will get stopped.
-                    // Therefor issue a PTRACE_SYSCALL request to the parent to continue execution.
-                    // This is also important if we trace without the following forks option.
-                    if signal == Signal::SIGCHLD {
-                        self.issue_ptrace_syscall_request(pid, Some(signal))?;
-                        continue;
-                    }
-
-                    // If we fall through to here, we have another signal that's been sent to the tracee,
-                    // in this case, just forward the singal to the tracee to let it handle it.
-                    // TODO: Finer signal handling, edge-cases etc.
-                    ptrace::cont(pid, signal)?;
                 }
-                // WIFEXITED(status)
-                WaitStatus::Exited(pid, _) => {
-                    // If the process that exits is the original tracee, we can safely break here,
-                    // but we need to continue if the process that exits is a child of the original tracee.
-                    if self.pid == pid {
-                        break;
-                    } else {
-                        continue;
-                    };
-                }
-                // The traced process was stopped by a `PTRACE_EVENT_*` event.
-                WaitStatus::PtraceEvent(pid, _, code) => {
-                    // Handle exec events specially: prefer pre-parsed args captured at syscall
-                    // entry time (stored in `pending_args`) so we can print argv/envp even
-                    // after the address space has been replaced. When we detect an exec
-                    // event, log it as a successful exec (return 0) using the stored
-                    // args if present, otherwise fall back to best-effort parsing.
-                    if code == Event::PTRACE_EVENT_EXEC as i32 {
-                        // consume any pending args parsed at entry
-                        let pre = pending_args.remove(&pid).unwrap_or(None);
-                        if let Some(args_now) = pre {
-                            // Log as successful exec (execve should not return on success).
-                            self.log_exec_event(pid, args_now)?;
-                        } else if let Ok(regs) = self.get_registers(pid) {
-                            if let Ok(sysno) = self.get_syscall(regs) {
-                                if sysno == Sysno::execve || sysno == Sysno::execveat {
-                                    let args_now = arch::parse_args(pid, sysno, regs);
-                                    self.log_exec_event(pid, args_now)?;
-                                }
-                            }
-                        }
-                    }
-
-                    // We also stop at the PTRACE_EVENT_EXIT event because of the PTRACE_O_TRACEEXIT option.
-                    // We do this to properly catch and log exit-family syscalls, which do not have an PTRACE_SYSCALL_INFO_EXIT event.
-                    if code == Event::PTRACE_EVENT_EXIT as i32 && self.is_exit_syscall(pid)? {
-                        // use any pending args if present
-                        let pre = pending_args.remove(&pid).unwrap_or(None);
-                        self.log_standard_syscall(pid, None, pre, None, None)?;
-                    }
-
-                    self.issue_ptrace_syscall_request(pid, None)?;
-                }
-                // Tracee is traced with the PTRACE_O_TRACESYSGOOD option.
                 WaitStatus::PtraceSyscall(pid) => {
-                    // ptrace(PTRACE_GETEVENTMSG,...) can be one of three values here:
-                    // 1) PTRACE_SYSCALL_INFO_NONE
-                    // 2) PTRACE_SYSCALL_INFO_ENTRY
-                    // 3) PTRACE_SYSCALL_INFO_EXIT
-                    let event = ptrace::getevent(pid)? as u8;
-
-                    // Snapshot current time, to avoid polluting the syscall time with
-                    // non-syscall related latency.
-                    let timestamp = Some(SystemTime::now());
-
-                    // We only want to log regular syscalls on exit
-                    if let Some(syscall_start_time) = start_times.get_mut(&pid) {
-                        if event == 2 {
-                            let pre = pending_args.remove(&pid).unwrap_or(None);
-                            self.log_standard_syscall(
-                                pid,
-                                entry_regs,
-                                pre,
-                                *syscall_start_time,
-                                timestamp,
-                            )?;
-                            *syscall_start_time = None;
-                        } else {
-                            *syscall_start_time = timestamp;
-                            let regs = self.get_registers(pid)?;
-                            // Save entry registers for later use
-                            entry_regs = Some(regs);
-
-                            // Try to detect exec-like syscalls and pre-parse their args while
-                            // the address space is still intact.
-                            if let Ok(sysno) = self.get_syscall(regs) {
-                                if sysno == Sysno::execve || sysno == Sysno::execveat {
-                                    let args = arch::parse_args(pid, sysno, regs);
-                                    pending_args.insert(pid, Some(args));
-                                } else {
-                                    pending_args.insert(pid, None);
-                                }
-                            }
-                        }
-                    } else {
-                        return Err(anyhow!("Unable to get start time for tracee {}", pid));
-                    }
-
+                    self.handle_syscall_stop(pid, &mut states, task_system_time, observed_at)?;
                     self.issue_ptrace_syscall_request(pid, None)?;
                 }
-                // WIFSIGNALED(status), signal is WTERMSIG(status) and coredump is WCOREDUMP(status)
+                WaitStatus::PtraceEvent(pid, signal, code) => {
+                    if code == Event::PTRACE_EVENT_STOP as i32 {
+                        let state = states.entry(pid).or_default();
+                        state.seized = true;
+                        if is_expected_event_startup_stop(state.startup_stop, signal) {
+                            state.startup_stop = None;
+                            self.issue_ptrace_syscall_request(pid, None)?;
+                            continue;
+                        }
+                        if state.seized && is_stopping_signal(signal) && listen_tracee(pid)? {
+                            continue;
+                        }
+                        self.issue_ptrace_syscall_request(pid, None)?;
+                        continue;
+                    }
+                    if code == Event::PTRACE_EVENT_EXEC as i32 {
+                        self.migrate_exec_state(pid, &mut states)?;
+                    } else if code == Event::PTRACE_EVENT_FORK as i32
+                        || code == Event::PTRACE_EVENT_VFORK as i32
+                        || code == Event::PTRACE_EVENT_CLONE as i32
+                    {
+                        let child = Pid::from_raw(ptrace::getevent(pid)? as libc::pid_t);
+                        let child_was_known = states.contains_key(&child);
+                        let parent_seized = states.get(&pid).is_some_and(|state| state.seized);
+                        states
+                            .entry(child)
+                            .and_modify(|state| state.seized = parent_seized)
+                            .or_insert_with(|| TraceeState {
+                                startup_stop: Some(StartupStop::AutoAttachedChild),
+                                seized: parent_seized,
+                                ..TraceeState::default()
+                            });
+                        if !child_was_known && !self.args.summary_only {
+                            writeln!(&mut self.output, "Attaching to child {child}")?;
+                        }
+                    } else if code == Event::PTRACE_EVENT_EXIT as i32 {
+                        let entry = states
+                            .get_mut(&pid)
+                            .and_then(|state| state.entry.take())
+                            .filter(|entry| {
+                                entry.syscall.is(Sysno::exit) || entry.syscall.is(Sysno::exit_group)
+                            });
+                        if let Some(entry) = entry {
+                            let (wall_time, system_time) = completed_times(
+                                entry.started_wall,
+                                entry.started_system,
+                                observed_at,
+                                task_system_time,
+                            );
+                            self.log_completed_syscall(
+                                pid,
+                                entry,
+                                RetCode::Ok(0),
+                                wall_time,
+                                system_time,
+                            )?;
+                        }
+                    }
+
+                    if let Some(state) = states.get_mut(&pid) {
+                        state.startup_stop = None;
+                    }
+                    self.issue_ptrace_syscall_request(pid, None)?;
+                }
+                WaitStatus::Exited(pid, code) => {
+                    states.remove(&pid);
+                    if pid == self.pid {
+                        root_outcome = Some(TraceOutcome::Exited(code));
+                    }
+                }
                 WaitStatus::Signaled(pid, signal, coredump) => {
-                    writeln!(
-                        &mut self.output,
-                        "Child {} terminated by signal {} {}",
-                        pid,
-                        signal,
-                        if coredump { "(core dumped)" } else { "" }
-                    )?;
-                    break;
+                    states.remove(&pid);
+                    if !self.args.summary_only {
+                        writeln!(
+                            &mut self.output,
+                            "Child {pid} terminated by signal {signal}{}",
+                            if coredump { " (core dumped)" } else { "" }
+                        )?;
+                    }
+                    if pid == self.pid {
+                        root_outcome = Some(TraceOutcome::Signaled(signal));
+                    }
                 }
-                // WIFCONTINUED(status), this usually happens when a process receives a SIGCONT.
-                // Just continue with the next iteration of the loop.
-                WaitStatus::Continued(_) | WaitStatus::StillAlive => {
-                    continue;
-                }
+                WaitStatus::Continued(_) | WaitStatus::StillAlive => {}
             }
         }
 
         if !self.args.json && (self.args.summary_only || self.args.summary) {
             if !self.args.summary_only {
-                // Make a gap between the last syscall and the summary
                 writeln!(&mut self.output)?;
             }
             self.report_summary()?;
         }
 
-        Ok(())
+        root_outcome.ok_or_else(|| anyhow!("tracee disappeared without an exit status"))
     }
 
     pub fn report_summary(&mut self) -> Result<()> {
@@ -365,196 +372,221 @@ impl<W: Write> Tracer<W> {
             .apply_modifier(UTF8_ROUND_CORNERS)
             .set_content_arrangement(ContentArrangement::Dynamic)
             .set_header(&headers);
-
-        for i in 0..headers.len() {
-            table.column_mut(i).unwrap().set_cell_alignment(Right);
+        for index in 0..headers.len() {
+            table.column_mut(index).unwrap().set_cell_alignment(Right);
         }
 
-        let mut sorted_sysno: Vec<_> = self.filter.all_enabled().iter().collect();
-        sorted_sysno.sort_by_key(|k| k.name());
-        let t_time: Duration = self.syscalls_time.values().sum();
-
-        for sysno in sorted_sysno {
-            let (Some(pass), Some(fail), Some(time)) = (
-                self.syscalls_pass.get(sysno),
-                self.syscalls_fail.get(sysno),
-                self.syscalls_time.get(sysno),
-            ) else {
-                continue;
-            };
-
-            let calls = pass + fail;
-            if calls == 0 {
-                continue;
-            }
-
-            let time_percent = if !t_time.is_zero() {
-                time.as_secs_f32() / t_time.as_secs_f32() * 100f32
+        let mut stats: Vec<_> = self.syscall_stats.iter().collect();
+        stats.sort_by_key(|(syscall, _)| syscall.name());
+        let total_time: Duration = stats.iter().map(|(_, stat)| stat.time).sum();
+        for (syscall, stat) in stats {
+            let calls = stat.pass + stat.fail;
+            let percent = if total_time.is_zero() {
+                0.0
             } else {
-                0f32
+                stat.time.as_secs_f64() / total_time.as_secs_f64() * 100.0
             };
-
             table.add_row(vec![
-                Cell::new(format!("{time_percent:.1}%")),
-                Cell::new(format!("{}µs", time.as_micros())),
-                Cell::new(format!("{:.1}ns", time.as_nanos() as f64 / calls as f64)),
-                Cell::new(format!("{calls}")),
-                Cell::new(format!("{fail}")),
-                Cell::new(sysno.name()),
+                Cell::new(format!("{percent:.1}%")),
+                Cell::new(format!("{}µs", stat.time.as_micros())),
+                Cell::new(format!(
+                    "{:.1}ns",
+                    stat.time.as_nanos() as f64 / calls as f64
+                )),
+                Cell::new(calls),
+                Cell::new(stat.fail),
+                Cell::new(syscall.name()),
             ]);
         }
 
-        // Create the totals row, but don't add it to the table yet
-        let failed = self.syscalls_fail.values().sum::<u64>();
-        let calls: u64 = self.syscalls_pass.values().sum::<u64>() + failed;
+        let failed = self
+            .syscall_stats
+            .values()
+            .map(|stat| stat.fail)
+            .sum::<u64>();
+        let calls = self
+            .syscall_stats
+            .values()
+            .map(|stat| stat.pass + stat.fail)
+            .sum::<u64>();
+        let average = if calls == 0 {
+            0.0
+        } else {
+            total_time.as_nanos() as f64 / calls as f64
+        };
         let totals: Row = vec![
-            Cell::new("100%"),
-            Cell::new(format!("{}µs", t_time.as_micros())),
-            Cell::new(format!("{:.1}ns", t_time.as_nanos() as f64 / calls as f64)),
+            Cell::new(if calls == 0 { "0%" } else { "100%" }),
+            Cell::new(format!("{}µs", total_time.as_micros())),
+            Cell::new(format!("{average:.1}ns")),
             Cell::new(calls),
-            Cell::new(failed.to_string()),
+            Cell::new(failed),
             Cell::new("total"),
         ]
         .into();
-
-        // TODO: consider using another table-creating crate
-        //       https://github.com/Nukesor/comfy-table/issues/104
-        // This is a hack to add a line between the table and the summary,
-        // computing max column width of each existing row plus the totals row
         let divider_row: Vec<String> = table
             .column_max_content_widths()
             .iter()
             .copied()
             .enumerate()
-            .map(|(idx, val)| {
-                let cell_at_idx = totals.cell_iter().nth(idx).unwrap();
-                (val as usize).max(cell_at_idx.content().len())
+            .map(|(index, width)| {
+                let cell = totals.cell_iter().nth(index).unwrap();
+                (width as usize).max(cell.content().len())
             })
-            .map(|v| str::repeat("-", v))
+            .map(|width| str::repeat("-", width))
             .collect();
         table.add_row(divider_row);
         table.add_row(totals);
-
         if !self.args.summary_only {
-            // separate a list of syscalls from the summary table with an blank line
             writeln!(&mut self.output)?;
         }
         writeln!(&mut self.output, "{table}")?;
-
         Ok(())
     }
 
-    fn log_standard_syscall(
+    fn handle_syscall_stop(
         &mut self,
         pid: Pid,
-        entry_regs: Option<user_regs_struct>,
-        pre_parsed_args: Option<SyscallArgs>,
-        syscall_start_time: Option<SystemTime>,
-        syscall_end_time: Option<SystemTime>,
+        states: &mut HashMap<Pid, TraceeState>,
+        task_system_time: Duration,
+        observed_at: Instant,
     ) -> Result<()> {
-        let register_data = self.parse_register_data(pid);
-        if let Err(e) = register_data {
-            eprintln!("{e}");
-            return Ok(());
-        }
-        let (syscall_number, registers) = register_data.unwrap();
-
-        // Theres no PTRACE_SYSCALL_INFO_EXIT for an exit-family syscall, hence ret_code will always be 0xffffffffffffffda (which is -38)
-        // -38 is ENOSYS which is put into RAX as a default return value by the kernel's syscall entry code.
-        // In order to not pollute the summary with this false positive, avoid exit-family syscalls from being counted (same behaviour as strace).
-        let ret_code = match syscall_number {
-            Sysno::exit | Sysno::exit_group => RetCode::from_raw(0),
-            _ => {
-                #[cfg(target_arch = "x86_64")]
-                let code = RetCode::from_raw(registers.rax);
-                #[cfg(target_arch = "riscv64")]
-                let code = RetCode::from_raw(registers.a7);
-                #[cfg(target_arch = "aarch64")]
-                let code = RetCode::from_raw(registers.regs[0]);
-                match code {
-                    RetCode::Err(_) => self.syscalls_fail[syscall_number] += 1,
-                    _ => self.syscalls_pass[syscall_number] += 1,
+        let state = states.entry(pid).or_default();
+        let stop = read_syscall_stop(pid);
+        let stop = match stop {
+            SyscallStop::Unknown => {
+                let registers = self.get_registers(pid)?;
+                if state.fallback_needs_sync {
+                    state.fallback_needs_sync = false;
+                    if fallback_stop_is_entry(registers) == Some(false) {
+                        return Ok(());
+                    }
                 }
-                code
-            }
-        };
-
-        // Prefer entry registers if provided (they allow reading strings before exec).
-        let registers = entry_regs.unwrap_or(registers);
-
-        // Special handling: collapse repeated failing execve attempts if enabled.
-        if self.args.collapse_exec_retries
-            && (syscall_number == Sysno::execve || syscall_number == Sysno::execveat)
-        {
-            if let RetCode::Err(errno) = ret_code {
-                // ENOENT is -2: common when execvp probes PATH entries.
-                if errno == -2 {
-                    let counter = self.exec_retry_counts.entry(pid).or_default();
-                    *counter += 1;
-                    // suppress printing this failing execve
-                    return Ok(());
-                }
-            } else {
-                // success: if we suppressed prior failures, print a compact summary
-                if let Some(count) = self.exec_retry_counts.remove(&pid) {
-                    if count > 0 {
-                        writeln!(
-                            &mut self.output,
-                            "[{}] execve: collapsed {} failed attempts",
-                            pid, count
-                        )?;
+                if state.entry.is_some() {
+                    let raw = raw_return_value(registers);
+                    SyscallStop::Exit(raw, (-4095..=-1).contains(&raw))
+                } else {
+                    SyscallStop::Entry {
+                        raw: raw_syscall_number(registers),
+                        arch: registers_use_native_abi(registers).then(native_audit_arch),
+                        args: Some(register_args_for_abi(registers)),
                     }
                 }
             }
-        }
-
-        if self.filter.matches(syscall_number, ret_code) {
-            let elapsed = syscall_start_time.map_or(Duration::default(), |start_time| {
-                let end_time = syscall_end_time.unwrap_or(SystemTime::now());
-                end_time.duration_since(start_time).unwrap_or_default()
-            });
-
-            if syscall_start_time.is_some() {
-                self.syscalls_time[syscall_number] += elapsed;
+            known => {
+                state.fallback_needs_sync = false;
+                known
             }
+        };
 
-            if !self.args.summary_only {
-                // Use pre-parsed args if provided (captured at entry), otherwise parse now.
-                let args = pre_parsed_args
-                    .unwrap_or_else(|| arch::parse_args(pid, syscall_number, registers));
-                let info = SyscallInfo {
-                    typ: "SYSCALL",
-                    pid,
-                    syscall: syscall_number,
+        match stop {
+            SyscallStop::Entry {
+                raw,
+                arch,
+                args: raw_args,
+            } => {
+                let registers = self.get_registers(pid)?;
+                let syscall = SyscallId::from_raw_for_native_abi(
+                    raw,
+                    arch.is_some_and(|arch| arch == native_audit_arch()),
+                );
+                let args = syscall.known().map_or_else(
+                    || {
+                        raw_args.map_or_else(
+                            || arch::unknown_args(registers),
+                            arch::unknown_args_from_values,
+                        )
+                    },
+                    |known| arch::parse_entry_args(pid, known, registers, self.string_limit),
+                );
+                state.entry = Some(SyscallEntry {
+                    syscall,
+                    registers,
                     args,
-                    result: ret_code,
-                    duration: elapsed,
-                };
-                self.write_syscall_info(&info)?;
+                    started_wall: Instant::now(),
+                    started_system: task_system_time,
+                });
             }
+            SyscallStop::Exit(value, is_error) => {
+                let Some(mut entry) = state.entry.take() else {
+                    return Ok(());
+                };
+                if let Some(known) = entry.syscall.known() {
+                    entry.args = arch::parse_exit_args(
+                        pid,
+                        known,
+                        entry.registers,
+                        self.string_limit,
+                        value,
+                        &entry.args,
+                    );
+                }
+                let result =
+                    RetCode::from_exit(value, is_error, syscall_returns_address(entry.syscall));
+                let (wall_time, system_time) = completed_times(
+                    entry.started_wall,
+                    entry.started_system,
+                    observed_at,
+                    task_system_time,
+                );
+                self.log_completed_syscall(pid, entry, result, wall_time, system_time)?;
+            }
+            SyscallStop::Unknown => unreachable!(),
         }
-
         Ok(())
     }
 
-    fn log_exec_event(&mut self, pid: Pid, args: SyscallArgs) -> Result<()> {
-        // Construct a SyscallInfo-like record for exec events. Mark result as Ok(0)
-        // since PTRACE_EVENT_EXEC means the exec completed successfully.
-        let info = SyscallInfo {
-            typ: "SYSCALL",
-            pid,
-            syscall: Sysno::execve,
-            args,
-            result: RetCode::Ok(0),
-            duration: Duration::default(),
-        };
-        self.write_syscall_info(&info)?;
+    fn log_completed_syscall(
+        &mut self,
+        pid: Pid,
+        entry: SyscallEntry,
+        result: RetCode,
+        wall_time: Duration,
+        system_time: Duration,
+    ) -> Result<()> {
+        if !self.filter.matches(entry.syscall, result) {
+            return Ok(());
+        }
+
+        let stats = self.syscall_stats.entry(entry.syscall).or_default();
+        stats.time += system_time;
+        match result {
+            RetCode::Err(_) => stats.fail += 1,
+            RetCode::Ok(_) | RetCode::Address(_) => stats.pass += 1,
+        }
+
+        if self.args.collapse_exec_retries
+            && (entry.syscall.is(Sysno::execve) || entry.syscall.is(Sysno::execveat))
+        {
+            if result == RetCode::Err(-libc::ENOENT) {
+                *self.exec_retry_counts.entry(pid).or_default() += 1;
+                return Ok(());
+            }
+            if let Some(count) = self.exec_retry_counts.remove(&pid) {
+                if count > 0 && !self.args.summary_only {
+                    writeln!(
+                        &mut self.output,
+                        "[{pid}] execve: collapsed {count} failed attempts"
+                    )?;
+                }
+            }
+        }
+
+        if !self.args.summary_only {
+            self.write_syscall_info(&SyscallInfo {
+                typ: "SYSCALL",
+                pid,
+                syscall: entry.syscall,
+                args: entry.args,
+                result,
+                duration: wall_time,
+            })?;
+        }
         Ok(())
     }
 
     fn write_syscall_info(&mut self, info: &SyscallInfo) -> Result<()> {
         if self.args.json {
-            let json = serde_json::to_string(&info)?;
+            let json = serde_json::to_string(info)?;
             Ok(writeln!(&mut self.output, "{json}")?)
         } else {
             info.write_syscall(
@@ -567,91 +599,541 @@ impl<W: Write> Tracer<W> {
         }
     }
 
-    // Issue a PTRACE_SYSCALL request to the tracee, forwarding a signal if one is provided.
     fn issue_ptrace_syscall_request(&self, pid: Pid, signal: Option<Signal>) -> Result<()> {
-        ptrace::syscall(pid, signal)
-            .map_err(|_| anyhow!("Unable to issue a PTRACE_SYSCALL request in tracee {}", pid))
+        normalize_ptrace_restart(pid, ptrace::syscall(pid, signal))
     }
 
-    // TODO: This is arch-specific code and should be modularized
     fn get_registers(&self, pid: Pid) -> Result<user_regs_struct> {
-        ptrace::getregs(pid).map_err(|_| anyhow!("Unable to get registers from tracee {}", pid))
+        ptrace::getregs(pid)
+            .map_err(|error| anyhow!("unable to read registers from tracee {pid}: {error}"))
     }
 
-    fn get_syscall(&self, registers: user_regs_struct) -> Result<Sysno> {
-        #[cfg(target_arch = "x86_64")]
-        let reg = registers.orig_rax;
-        #[cfg(target_arch = "riscv64")]
-        let reg = registers.a7;
-        #[cfg(target_arch = "aarch64")]
-        let reg = registers.regs[8];
-
-        Ok(u32::try_from(reg)
-            .map_err(|_| anyhow!("Invalid syscall number {reg}"))?
-            .into())
-    }
-
-    // Issues a ptrace(PTRACE_GETREGS, ...) request and gets the corresponding syscall number (Sysno).
-    fn parse_register_data(&self, pid: Pid) -> Result<(Sysno, user_regs_struct)> {
-        let registers = self.get_registers(pid)?;
-        let syscall_number = self.get_syscall(registers)?;
-
-        Ok((syscall_number, registers))
-    }
-
-    fn is_exit_syscall(&self, pid: Pid) -> Result<bool> {
-        self.get_registers(pid).map(|registers| {
-            #[cfg(target_arch = "x86_64")]
-            let reg = registers.orig_rax;
-            #[cfg(target_arch = "riscv64")]
-            let reg = registers.a7;
-            #[cfg(target_arch = "aarch64")]
-            let reg = registers.regs[8];
-            reg == Sysno::exit as u64 || reg == Sysno::exit_group as u64
-        })
+    fn migrate_exec_state(
+        &mut self,
+        pid: Pid,
+        states: &mut HashMap<Pid, TraceeState>,
+    ) -> Result<()> {
+        let former_tid = Pid::from_raw(ptrace::getevent(pid)? as libc::pid_t);
+        if former_tid != pid && former_tid.as_raw() > 0 {
+            if let Some(state) = states.remove(&former_tid) {
+                states.insert(pid, state);
+            }
+            if let Some(count) = self.exec_retry_counts.remove(&former_tid) {
+                self.exec_retry_counts.insert(pid, count);
+            }
+        }
+        Ok(())
     }
 }
 
-pub fn run_tracee(command: &[String], envs: &[String], username: &Option<String>) -> Result<()> {
-    ptrace::traceme()?;
-    // Stop ourselves so the tracer parent can set ptrace options before exec.
-    // This improves reliability of capturing the initial execve syscall arguments.
-    // Make this behavior conditional: set `LURK_DISABLE_SIGSTOP=1` in the environment
-    // to skip raising SIGSTOP (useful when running under debuggers or wrappers).
-    if std::env::var_os("LURK_DISABLE_SIGSTOP").is_none() {
-        nix::sys::signal::raise(Signal::SIGSTOP).map_err(|_| anyhow!("Unable to raise SIGSTOP"))?;
+fn read_syscall_stop(pid: Pid) -> SyscallStop {
+    let mut info = std::mem::MaybeUninit::<PtraceSyscallInfo>::zeroed();
+    let result = unsafe {
+        libc::ptrace(
+            libc::PTRACE_GET_SYSCALL_INFO,
+            pid.as_raw(),
+            std::mem::size_of::<PtraceSyscallInfo>() as *mut libc::c_void,
+            info.as_mut_ptr(),
+        )
+    };
+    if result < 0 {
+        return SyscallStop::Unknown;
     }
-    personality::set(Persona::ADDR_NO_RANDOMIZE)
-        .map_err(|_| anyhow!("Unable to set ADDR_NO_RANDOMIZE"))?;
-    let mut binary = command
-        .first()
-        .ok_or_else(|| anyhow!("No command"))?
-        .to_string();
-    if let Ok(bin) = fs::canonicalize(&binary) {
-        binary = bin
-            .to_str()
-            .ok_or_else(|| anyhow!("Invalid binary path"))?
-            .to_string()
+    let info = unsafe { info.assume_init() };
+    match info.op {
+        libc::PTRACE_SYSCALL_INFO_ENTRY => SyscallStop::Entry {
+            raw: unsafe { info.data.entry.nr },
+            arch: Some(info.arch),
+            args: Some(unsafe { info.data.entry.args }),
+        },
+        libc::PTRACE_SYSCALL_INFO_EXIT => {
+            let exit = unsafe { info.data.exit };
+            SyscallStop::Exit(exit.sval, exit.is_error != 0)
+        }
+        _ => SyscallStop::Unknown,
     }
-    let mut cmd = Command::new(binary);
-    cmd.args(command[1..].iter()).stdout(Stdio::null());
+}
 
+const fn native_audit_arch() -> u32 {
+    #[cfg(target_arch = "x86_64")]
+    return 0xc000_003e;
+    #[cfg(target_arch = "aarch64")]
+    return 0xc000_00b7;
+    #[cfg(target_arch = "riscv64")]
+    return 0xc000_00f3;
+}
+
+fn registers_use_native_abi(registers: user_regs_struct) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    return registers.cs == 0x33;
+    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+    return true;
+}
+
+fn register_args_for_abi(registers: user_regs_struct) -> [u64; 6] {
+    #[cfg(target_arch = "x86_64")]
+    if !registers_use_native_abi(registers) {
+        return [
+            registers.rbx,
+            registers.rcx,
+            registers.rdx,
+            registers.rsi,
+            registers.rdi,
+            registers.rbp,
+        ]
+        .map(|value| value & u64::from(u32::MAX));
+    }
+    arch::register_args(registers)
+}
+
+fn fallback_stop_is_entry(registers: user_regs_struct) -> Option<bool> {
+    #[cfg(target_arch = "x86_64")]
+    return Some(registers.rax as i64 == -i64::from(libc::ENOSYS));
+    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+    return None;
+}
+
+fn raw_syscall_number(registers: user_regs_struct) -> u64 {
+    #[cfg(target_arch = "x86_64")]
+    return registers.orig_rax;
+    #[cfg(target_arch = "riscv64")]
+    return registers.a7;
+    #[cfg(target_arch = "aarch64")]
+    return registers.regs[8];
+}
+
+fn raw_return_value(registers: user_regs_struct) -> i64 {
+    #[cfg(target_arch = "x86_64")]
+    return registers.rax as i64;
+    #[cfg(target_arch = "riscv64")]
+    return registers.a0 as i64;
+    #[cfg(target_arch = "aarch64")]
+    return registers.regs[0] as i64;
+}
+
+fn syscall_returns_address(syscall: SyscallId) -> bool {
+    matches!(
+        syscall.known().map(|known| known.name()),
+        Some("mmap" | "mmap2" | "mremap" | "brk" | "shmat")
+    )
+}
+
+fn is_stopping_signal(signal: Signal) -> bool {
+    matches!(
+        signal,
+        Signal::SIGSTOP | Signal::SIGTSTP | Signal::SIGTTIN | Signal::SIGTTOU
+    )
+}
+
+fn completed_times(
+    started_wall: Instant,
+    started_system: Duration,
+    observed_at: Instant,
+    task_system_time: Duration,
+) -> (Duration, Duration) {
+    (
+        observed_at.saturating_duration_since(started_wall),
+        task_system_time.saturating_sub(started_system),
+    )
+}
+
+fn is_expected_plain_startup_stop(startup: Option<StartupStop>, signal: Signal) -> bool {
+    signal == Signal::SIGSTOP
+        && matches!(
+            startup,
+            Some(
+                StartupStop::LegacySigstop
+                    | StartupStop::SeizedLaunch
+                    | StartupStop::AutoAttachedChild
+            )
+        )
+}
+
+fn is_expected_event_startup_stop(startup: Option<StartupStop>, signal: Signal) -> bool {
+    match startup {
+        Some(StartupStop::SeizedInterrupt) => signal == Signal::SIGTRAP,
+        Some(
+            StartupStop::LegacySigstop | StartupStop::SeizedLaunch | StartupStop::AutoAttachedChild,
+        ) => signal == Signal::SIGTRAP || signal == Signal::SIGSTOP,
+        None => false,
+    }
+}
+
+fn normalize_ptrace_restart(pid: Pid, result: nix::Result<()>) -> Result<()> {
+    match result {
+        Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
+        Err(error) => Err(anyhow!("unable to resume tracee {pid}: {error}")),
+    }
+}
+
+fn ptrace_listen(pid: Pid) -> nix::Result<()> {
+    let result = unsafe {
+        libc::ptrace(
+            libc::PTRACE_LISTEN,
+            pid.as_raw(),
+            std::ptr::null_mut::<libc::c_void>(),
+            std::ptr::null_mut::<libc::c_void>(),
+        )
+    };
+    nix::errno::Errno::result(result).map(drop)
+}
+
+fn listen_tracee(pid: Pid) -> Result<bool> {
+    match ptrace_listen(pid) {
+        Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(true),
+        Err(nix::errno::Errno::EIO) | Err(nix::errno::Errno::EINVAL) => Ok(false),
+        Err(error) => Err(anyhow!("unable to listen to stopped tracee {pid}: {error}")),
+    }
+}
+
+fn duration_from_timeval(time: libc::timeval) -> Duration {
+    let seconds = u64::try_from(time.tv_sec).unwrap_or_default();
+    let micros = u32::try_from(time.tv_usec).unwrap_or_default().min(999_999);
+    Duration::new(seconds, micros * 1_000)
+}
+
+fn wait_for_tracee() -> nix::Result<(WaitStatus, Duration, Instant)> {
+    loop {
+        let mut raw_status = 0;
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+        let pid = unsafe {
+            libc::wait4(
+                -1,
+                &mut raw_status,
+                WaitPidFlag::__WALL.bits(),
+                usage.as_mut_ptr(),
+            )
+        };
+        if pid < 0 {
+            let error = nix::errno::Errno::last();
+            if error == nix::errno::Errno::EINTR {
+                continue;
+            }
+            return Err(error);
+        }
+        let observed_at = Instant::now();
+        let usage = unsafe { usage.assume_init() };
+        let status = WaitStatus::from_raw(Pid::from_raw(pid), raw_status)?;
+        return Ok((status, duration_from_timeval(usage.ru_stime), observed_at));
+    }
+}
+
+#[derive(Debug)]
+struct Credentials {
+    uid: libc::uid_t,
+    gid: libc::gid_t,
+    groups: Vec<libc::gid_t>,
+}
+
+fn credentials(username: &Option<String>) -> Result<Option<Credentials>> {
+    let Some(username) = username else {
+        return Ok(None);
+    };
+    let user =
+        get_user_by_name(username).ok_or_else(|| anyhow!("user '{username}' does not exist"))?;
+    let groups = user
+        .groups()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|group| group.gid())
+        .collect();
+    Ok(Some(Credentials {
+        uid: user.uid(),
+        gid: user.primary_group_id(),
+        groups,
+    }))
+}
+
+fn environment(envs: &[String]) -> BTreeMap<OsString, OsString> {
+    let mut environment: BTreeMap<_, _> = std::env::vars_os().collect();
     for token in envs {
         let mut parts = token.splitn(2, '=');
-        match (parts.next(), parts.next()) {
-            (Some(key), Some(value)) => cmd.env(key, value),
-            (Some(key), None) => cmd.env_remove(key),
-            _ => unreachable!(),
-        };
-    }
-
-    if let Some(username) = username {
-        if let Some(user) = get_user_by_name(username) {
-            cmd.uid(user.uid());
+        let key = parts.next().unwrap_or_default();
+        if let Some(value) = parts.next() {
+            environment.insert(key.into(), value.into());
+        } else {
+            environment.remove(OsStr::new(key));
         }
     }
+    environment
+}
 
-    let _ = cmd.exec();
+fn resolve_executable(
+    command: &str,
+    environment: &BTreeMap<OsString, OsString>,
+) -> Result<PathBuf> {
+    let command_path = Path::new(command);
+    if command_path.components().count() > 1 {
+        return Ok(command_path.to_owned());
+    }
+    let path = environment
+        .get(OsStr::new("PATH"))
+        .ok_or_else(|| anyhow!("PATH is not set"))?;
+    std::env::split_paths(path)
+        .map(|directory| directory.join(command))
+        .find(|candidate| {
+            candidate.metadata().is_ok_and(|metadata| {
+                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+            })
+        })
+        .ok_or_else(|| anyhow!("command '{command}' was not found in PATH"))
+}
 
-    Ok(())
+/// Fork and seize a tracee using only async-signal-safe operations in the child.
+///
+/// Credential setup is completed before tracing begins, and the child inherits
+/// the caller's standard streams and address-space randomization settings.
+pub fn spawn_tracee(command: &[String], envs: &[String], username: &Option<String>) -> Result<Pid> {
+    spawn_tracee_with_options(command, envs, username, false)
+}
+
+/// Fork and seize a tracee, installing fork-following options atomically when requested.
+pub fn spawn_tracee_with_options(
+    command: &[String],
+    envs: &[String],
+    username: &Option<String>,
+    follow_forks: bool,
+) -> Result<Pid> {
+    let program = command.first().ok_or_else(|| anyhow!("no command"))?;
+    let environment = environment(envs);
+    let executable = resolve_executable(program, &environment)?;
+    let executable = CString::new(executable.as_os_str().as_bytes())?;
+    let argv: Vec<CString> = command
+        .iter()
+        .map(|arg| CString::new(arg.as_bytes()))
+        .collect::<std::result::Result<_, _>>()?;
+    let mut argv_ptrs: Vec<_> = argv.iter().map(|arg| arg.as_ptr()).collect();
+    argv_ptrs.push(std::ptr::null());
+    let environment: Vec<CString> = environment
+        .into_iter()
+        .map(|(key, value)| {
+            let mut pair = key;
+            pair.push("=");
+            pair.push(value);
+            CString::new(pair.as_os_str().as_bytes())
+        })
+        .collect::<std::result::Result<_, _>>()?;
+    let mut env_ptrs: Vec<_> = environment.iter().map(|value| value.as_ptr()).collect();
+    env_ptrs.push(std::ptr::null());
+    let credentials = credentials(username)?;
+
+    match unsafe { fork() }.context("fork failed")? {
+        ForkResult::Parent { child } => {
+            if let Err(error) = wait_for_spawn_stop(child) {
+                terminate_unstarted_tracee(child);
+                return Err(error);
+            }
+            if let Err(error) = ptrace::seize(child, arch::ptrace_options(follow_forks)) {
+                terminate_unstarted_tracee(child);
+                return Err(anyhow!("unable to seize tracee {child}: {error}"));
+            }
+            if let Err(error) = kill(child, Signal::SIGCONT) {
+                terminate_unstarted_tracee(child);
+                return Err(anyhow!("unable to continue tracee {child}: {error}"));
+            }
+            Ok(child)
+        }
+        ForkResult::Child => unsafe {
+            if let Some(credentials) = credentials {
+                if libc::setgroups(credentials.groups.len(), credentials.groups.as_ptr()) == -1
+                    || libc::setgid(credentials.gid) == -1
+                    || libc::setuid(credentials.uid) == -1
+                {
+                    libc::_exit(126);
+                }
+            }
+            libc::raise(libc::SIGSTOP);
+            libc::execve(executable.as_ptr(), argv_ptrs.as_ptr(), env_ptrs.as_ptr());
+            let error = nix::errno::Errno::last();
+            let message = b"lurk: unable to execute command\n";
+            libc::write(libc::STDERR_FILENO, message.as_ptr().cast(), message.len());
+            libc::_exit(if error == nix::errno::Errno::ENOENT {
+                127
+            } else {
+                126
+            });
+        },
+    }
+}
+
+fn wait_for_spawn_stop(child: Pid) -> Result<()> {
+    loop {
+        match waitpid(child, Some(WaitPidFlag::WUNTRACED)) {
+            Ok(WaitStatus::Stopped(pid, Signal::SIGSTOP)) if pid == child => return Ok(()),
+            Ok(WaitStatus::Exited(_, code)) => {
+                bail!("tracee exited with status {code} before it could be seized")
+            }
+            Ok(WaitStatus::Signaled(_, signal, _)) => {
+                bail!("tracee was killed by {signal} before it could be seized")
+            }
+            Ok(status) => bail!("unexpected tracee status before seize: {status:?}"),
+            Err(nix::errno::Errno::EINTR) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+fn terminate_unstarted_tracee(child: Pid) {
+    let _ = kill(child, Signal::SIGKILL);
+    while let Err(nix::errno::Errno::EINTR) = waitpid(child, None) {}
+}
+
+/// Seize an existing process and, with `follow_forks`, all current threads.
+pub fn attach_tracees(pid: Pid, follow_forks: bool) -> Result<Vec<Pid>> {
+    let options = arch::ptrace_options(follow_forks);
+    ptrace::seize(pid, options).with_context(|| format!("Unable to attach to process {pid}"))?;
+    match ptrace::interrupt(pid) {
+        Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+        Err(error) => return Err(anyhow!("Unable to stop attached process {pid}: {error}")),
+    }
+
+    let mut tracees = vec![pid];
+    if !follow_forks {
+        return Ok(tracees);
+    }
+
+    let mut attempted = HashSet::from([pid]);
+    loop {
+        let mut found_new_thread = false;
+        let task_directory = format!("/proc/{pid}/task");
+        let entries = match fs::read_dir(&task_directory) {
+            Ok(entries) => entries,
+            Err(_) => break,
+        };
+        for entry in entries.flatten() {
+            let Some(tid) = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.parse::<libc::pid_t>().ok())
+                .map(Pid::from_raw)
+            else {
+                continue;
+            };
+            if !attempted.insert(tid) {
+                continue;
+            }
+            found_new_thread = true;
+            if ptrace::seize(tid, options).is_err() {
+                continue;
+            }
+            tracees.push(tid);
+            let _ = ptrace::interrupt(tid);
+        }
+        if !found_new_thread {
+            break;
+        }
+    }
+    Ok(tracees)
+}
+
+fn apply_credentials(credentials: &Credentials) -> Result<()> {
+    let failed = unsafe {
+        libc::setgroups(credentials.groups.len(), credentials.groups.as_ptr()) == -1
+            || libc::setgid(credentials.gid) == -1
+            || libc::setuid(credentials.uid) == -1
+    };
+    if failed {
+        Err(std::io::Error::last_os_error().into())
+    } else {
+        Ok(())
+    }
+}
+
+/// Legacy child-side launcher retained for library compatibility.
+pub fn run_tracee(command: &[String], envs: &[String], username: &Option<String>) -> Result<()> {
+    if let Some(credentials) = credentials(username)? {
+        apply_credentials(&credentials)?;
+    }
+    ptrace::traceme()?;
+    nix::sys::signal::raise(Signal::SIGSTOP)?;
+    let program = command.first().ok_or_else(|| anyhow!("no command"))?;
+    let mut cmd = Command::new(program);
+    cmd.args(&command[1..]);
+    for token in envs {
+        let mut parts = token.splitn(2, '=');
+        let key = parts.next().unwrap_or_default();
+        if let Some(value) = parts.next() {
+            cmd.env(key, value);
+        } else {
+            cmd.env_remove(key);
+        }
+    }
+    let error = cmd.exec();
+    bail!("unable to execute '{program}': {error}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_stop_matching_never_consumes_an_unrelated_signal() {
+        assert!(is_expected_plain_startup_stop(
+            Some(StartupStop::LegacySigstop),
+            Signal::SIGSTOP
+        ));
+        assert!(!is_expected_plain_startup_stop(
+            Some(StartupStop::LegacySigstop),
+            Signal::SIGUSR1
+        ));
+        assert!(!is_expected_plain_startup_stop(
+            Some(StartupStop::SeizedInterrupt),
+            Signal::SIGSTOP
+        ));
+        assert!(is_expected_event_startup_stop(
+            Some(StartupStop::SeizedInterrupt),
+            Signal::SIGTRAP
+        ));
+        assert!(is_expected_event_startup_stop(
+            Some(StartupStop::LegacySigstop),
+            Signal::SIGTRAP
+        ));
+    }
+
+    #[test]
+    fn esrch_is_a_benign_ptrace_restart_race() {
+        let pid = Pid::from_raw(123);
+        assert!(normalize_ptrace_restart(pid, Err(nix::errno::Errno::ESRCH)).is_ok());
+        assert!(normalize_ptrace_restart(pid, Err(nix::errno::Errno::EIO)).is_err());
+    }
+
+    #[test]
+    fn completed_time_uses_the_wait_observation_snapshot() {
+        let started = Instant::now();
+        let observed = started + Duration::from_micros(25);
+        let (wall, system) = completed_times(
+            started,
+            Duration::from_micros(10),
+            observed,
+            Duration::from_micros(17),
+        );
+        assert_eq!(wall, Duration::from_micros(25));
+        assert_eq!(system, Duration::from_micros(7));
+    }
+
+    #[cfg(target_env = "gnu")]
+    #[test]
+    fn local_syscall_info_layout_matches_libc() {
+        assert_eq!(
+            std::mem::size_of::<PtraceSyscallInfo>(),
+            std::mem::size_of::<libc::ptrace_syscall_info>()
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn compat_register_fallback_uses_the_i386_calling_convention() {
+        let mut registers = unsafe { std::mem::zeroed::<user_regs_struct>() };
+        registers.cs = 0x23;
+        registers.rbx = 1;
+        registers.rcx = 2;
+        registers.rdx = 3;
+        registers.rsi = 4;
+        registers.rdi = 5;
+        registers.rbp = 6;
+        registers.rax = (-i64::from(libc::ENOSYS)) as u64;
+        assert!(!registers_use_native_abi(registers));
+        assert_eq!(register_args_for_abi(registers), [1, 2, 3, 4, 5, 6]);
+        assert_eq!(fallback_stop_is_entry(registers), Some(true));
+    }
 }

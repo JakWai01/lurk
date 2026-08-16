@@ -16,11 +16,87 @@ use std::io::Write;
 use std::time::Duration;
 use syscalls::Sysno;
 
+/// A syscall number as reported by the kernel.
+///
+/// The running kernel may know syscalls that the `syscalls` crate used to
+/// build lurk does not.  Keeping the raw number prevents a new syscall from
+/// crashing the tracer.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SyscallId {
+    raw: u64,
+    known: Option<Sysno>,
+}
+
+impl SyscallId {
+    pub fn from_raw(raw: u64) -> Self {
+        Self {
+            raw,
+            known: usize::try_from(raw).ok().and_then(Sysno::new),
+        }
+    }
+
+    pub fn from_raw_for_native_abi(raw: u64, native_abi: bool) -> Self {
+        if native_abi {
+            Self::from_raw(raw)
+        } else {
+            Self { raw, known: None }
+        }
+    }
+
+    pub const fn from_known(syscall: Sysno) -> Self {
+        Self {
+            raw: syscall.id() as u64,
+            known: Some(syscall),
+        }
+    }
+
+    pub const fn raw(self) -> u64 {
+        self.raw
+    }
+
+    pub const fn known(self) -> Option<Sysno> {
+        self.known
+    }
+
+    pub fn is(self, syscall: Sysno) -> bool {
+        self.known == Some(syscall)
+    }
+
+    pub fn name(self) -> String {
+        self.known.map_or_else(
+            || {
+                if u32::try_from(self.raw).is_ok() {
+                    format!("syscall_{}", self.raw)
+                } else {
+                    format!("syscall_{:#x}", self.raw)
+                }
+            },
+            |syscall| syscall.name().to_owned(),
+        )
+    }
+}
+
+impl From<Sysno> for SyscallId {
+    fn from(value: Sysno) -> Self {
+        Self::from_known(value)
+    }
+}
+
+impl Display for SyscallId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.known {
+            Some(syscall) => Display::fmt(&syscall, f),
+            None if u32::try_from(self.raw).is_ok() => write!(f, "syscall_{}", self.raw),
+            None => write!(f, "syscall_{:#x}", self.raw),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct SyscallInfo {
     pub typ: &'static str,
     pub pid: Pid,
-    pub syscall: Sysno,
+    pub syscall: SyscallId,
     pub args: SyscallArgs,
     pub result: RetCode,
     pub duration: Duration,
@@ -37,7 +113,7 @@ impl SyscallInfo {
         Self {
             typ: "SYSCALL",
             pid,
-            syscall,
+            syscall: syscall.into(),
             args: parse_args(pid, syscall, registers),
             result: ret_code,
             duration,
@@ -55,29 +131,40 @@ impl SyscallInfo {
         if style.use_colors {
             write!(output, "[{}] ", style.pid.apply_to(&self.pid.to_string()))?;
         } else {
-            write!(output, "[{}] ", &self.pid)?;
+            write!(output, "[{}] ", self.pid)?;
         }
         if show_syscall_num {
-            write!(output, "{:>3} ", self.syscall.id())?;
+            write!(output, "{:>3} ", self.syscall.raw())?;
         }
         if style.use_colors {
             let styled = style.syscall.apply_to(self.syscall.to_string());
             write!(output, "{styled}(")
         } else {
-            write!(output, "{}(", &self.syscall)
+            write!(output, "{}(", self.syscall)
         }?;
         for (idx, arg) in self.args.0.iter().enumerate() {
             if idx > 0 {
                 write!(output, ", ")?;
             }
             // Special-case a few syscalls for more readable output
-            if self.syscall == Sysno::execve || self.syscall == Sysno::execveat {
-                // execve(filename, argv, envp)
+            let exec_env_index = if self.syscall.is(Sysno::execve) {
+                Some(2)
+            } else if self.syscall.is(Sysno::execveat) {
+                Some(3)
+            } else {
+                None
+            };
+            if let Some(env_index) = exec_env_index {
                 match (idx, arg) {
                     // argv: show array (possibly truncated by `string_limit` via write)
-                    (1, SyscallArg::StrVec(_, _)) => arg.write(output, string_limit)?,
+                    (1, SyscallArg::StrVec(_, _)) if self.syscall.is(Sysno::execve) => {
+                        arg.write(output, string_limit)?
+                    }
+                    (2, SyscallArg::StrVec(_, _)) if self.syscall.is(Sysno::execveat) => {
+                        arg.write(output, string_limit)?
+                    }
                     // envp: summarize like strace: print original pointer and count
-                    (2, SyscallArg::StrVec(vs, maybe_addr)) => {
+                    (arg_idx, SyscallArg::StrVec(vs, maybe_addr)) if arg_idx == env_index => {
                         if let Some(addr) = maybe_addr {
                             let count = if !vs.is_empty() {
                                 vs.len()
@@ -91,10 +178,13 @@ impl SyscallInfo {
                             arg.write(output, string_limit)?;
                         }
                     }
+                    (arg_idx, SyscallArg::StrArraySummary(count, addr)) if arg_idx == env_index => {
+                        write!(output, "{addr:#x} /* {count} vars */")?
+                    }
                     // default
                     _ => arg.write(output, string_limit)?,
                 }
-            } else if self.syscall == Sysno::mmap {
+            } else if self.syscall.is(Sysno::mmap) {
                 // mmap(addr, len, prot, flags, fd, offset)
                 // produce symbolic prot and flags
                 let parts = format_mmap_args(&self.args.0, string_limit);
@@ -108,7 +198,7 @@ impl SyscallInfo {
             }
         }
         write!(output, ") = ")?;
-        if self.syscall == Sysno::exit || self.syscall == Sysno::exit_group {
+        if self.syscall.is(Sysno::exit) || self.syscall.is(Sysno::exit_group) {
             write!(output, "?")?;
         } else {
             if style.use_colors {
@@ -135,7 +225,7 @@ impl Serialize for SyscallInfo {
         let mut map = serializer.serialize_map(Some(7))?;
         map.serialize_entry("type", &self.typ)?;
         map.serialize_entry("pid", &self.pid.as_raw())?;
-        map.serialize_entry("num", &self.syscall)?;
+        map.serialize_entry("num", &self.syscall.raw())?;
         map.serialize_entry("syscall", &self.syscall.to_string())?;
         map.serialize_entry("args", &self.args)?;
         match self.result {
@@ -148,7 +238,7 @@ impl Serialize for SyscallInfo {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SyscallArgs(pub Vec<SyscallArg>);
 
 impl Serialize for SyscallArgs {
@@ -158,8 +248,12 @@ impl Serialize for SyscallArgs {
             let value = match arg {
                 SyscallArg::Int(v) => serde_json::to_value(v).unwrap(),
                 SyscallArg::Str(v) => serde_json::to_value(v).unwrap(),
+                SyscallArg::Bytes(v) => serde_json::to_value(v).unwrap(),
                 SyscallArg::Addr(v) => Value::String(format!("{v:#x}")),
                 SyscallArg::StrVec(vs, _addr) => serde_json::to_value(vs).unwrap(),
+                SyscallArg::StrArraySummary(count, address) => {
+                    serde_json::json!({"address": format!("{address:#x}"), "count": count})
+                }
             };
             seq.serialize_element(&value)?;
         }
@@ -167,23 +261,30 @@ impl Serialize for SyscallArgs {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum RetCode {
-    Ok(i32),
+    Ok(i64),
     Err(i32),
-    Address(usize),
+    Address(u64),
 }
 
 impl RetCode {
     pub fn from_raw(ret_code: c_ulonglong) -> Self {
-        let ret_i32 = ret_code as isize;
-        // TODO: is this > or >= ?  Add a link to the docs.
-        if ret_i32.abs() > 0x8000 {
-            Self::Address(ret_code as usize)
-        } else if ret_i32 < 0 {
-            Self::Err(ret_i32 as i32)
+        let signed = ret_code as i64;
+        if (-4095..=-1).contains(&signed) {
+            Self::Err(signed as i32)
         } else {
-            Self::Ok(ret_i32 as i32)
+            Self::Ok(signed)
+        }
+    }
+
+    pub fn from_exit(ret_code: i64, is_error: bool, returns_address: bool) -> Self {
+        if is_error {
+            Self::Err(ret_code as i32)
+        } else if returns_address {
+            Self::Address(ret_code as u64)
+        } else {
+            Self::Ok(ret_code)
         }
     }
 }
@@ -191,18 +292,23 @@ impl RetCode {
 impl Display for RetCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Ok(v) | Self::Err(v) => Display::fmt(v, f),
+            Self::Ok(v) => Display::fmt(v, f),
+            Self::Err(v) => Display::fmt(v, f),
             Self::Address(v) => write!(f, "{v:#X}"),
         }
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub enum SyscallArg {
     Int(i64),
     Str(String),
+    Bytes(Vec<u8>),
     // store optional original pointer address for arrays so we can summarize like strace
     StrVec(Vec<String>, Option<usize>),
+    /// A NULL-terminated string array whose contents are intentionally not
+    /// copied (used for potentially sensitive environment vectors).
+    StrArraySummary(usize, usize),
     Addr(usize),
 }
 
@@ -218,6 +324,7 @@ impl SyscallArg {
                 .into();
                 write!(f, "{value}")
             }
+            Self::Bytes(bytes) => write_bytes(f, bytes, string_limit),
             Self::StrVec(vs, _addr) => {
                 // format vector as JSON-like array, applying trimming to each element
                 let mut parts = Vec::with_capacity(vs.len());
@@ -230,15 +337,43 @@ impl SyscallArg {
                 }
                 write!(f, "[{}]", parts.join(", "))
             }
+            Self::StrArraySummary(count, address) => {
+                write!(f, "{address:#x} /* {count} entries */")
+            }
             Self::Addr(v) => write!(f, "{v:#X}"),
         }
     }
 }
 
+fn write_bytes(f: &mut dyn Write, bytes: &[u8], limit: Option<usize>) -> io::Result<()> {
+    let shown = limit.map_or(bytes.len(), |limit| limit.min(bytes.len()));
+    write!(f, "\"")?;
+    for byte in &bytes[..shown] {
+        match byte {
+            b'\\' => write!(f, "\\\\")?,
+            b'\"' => write!(f, "\\\"")?,
+            b'\n' => write!(f, "\\n")?,
+            b'\r' => write!(f, "\\r")?,
+            b'\t' => write!(f, "\\t")?,
+            0x20..=0x7e => write!(f, "{}", char::from(*byte))?,
+            _ => write!(f, "\\x{byte:02x}")?,
+        }
+    }
+    write!(f, "\"")?;
+    if shown < bytes.len() {
+        write!(f, "...")?;
+    }
+    Ok(())
+}
+
 fn trim_str(string: &str, limit: usize) -> Cow<'_, str> {
-    match string.chars().as_str().get(..limit) {
-        None => Borrowed(string),
-        Some(s) => Owned(format!("{s}...")),
+    if string.chars().count() <= limit {
+        Borrowed(string)
+    } else {
+        Owned(format!(
+            "{}...",
+            string.chars().take(limit).collect::<String>()
+        ))
     }
 }
 
@@ -325,4 +460,63 @@ fn format_mmap_args(args: &[SyscallArg], string_limit: Option<usize>) -> Vec<Str
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn return_values_are_not_truncated_or_guessed_to_be_pointers() {
+        assert_eq!(RetCode::from_raw(1_u64 << 40), RetCode::Ok(1_i64 << 40));
+        assert_eq!(RetCode::from_raw((-2_i64) as u64), RetCode::Err(-2));
+    }
+
+    #[test]
+    fn raw_syscall_numbers_keep_the_kernel_word_size() {
+        let raw = u64::MAX;
+        let syscall = SyscallId::from_raw(raw);
+        assert_eq!(syscall.raw(), raw);
+        assert_eq!(syscall.known(), None);
+        assert_eq!(syscall.to_string(), "syscall_0xffffffffffffffff");
+
+        let compat_read = SyscallId::from_raw_for_native_abi(3, false);
+        assert_eq!(compat_read.raw(), 3);
+        assert_eq!(compat_read.known(), None);
+    }
+
+    #[test]
+    fn unicode_trimming_uses_character_boundaries() {
+        assert_eq!(trim_str("ééé", 2), "éé...");
+    }
+
+    #[test]
+    fn execveat_uses_the_correct_argv_and_environment_positions() {
+        let info = SyscallInfo {
+            typ: "SYSCALL",
+            pid: Pid::from_raw(1),
+            syscall: Sysno::execveat.into(),
+            args: SyscallArgs(vec![
+                SyscallArg::Int(-100),
+                SyscallArg::Str("/bin/true".to_owned()),
+                SyscallArg::StrVec(vec!["true".to_owned()], Some(0x1000)),
+                SyscallArg::StrArraySummary(3, 0x2000),
+                SyscallArg::Int(0),
+            ]),
+            result: RetCode::Ok(0),
+            duration: Duration::ZERO,
+        };
+        let mut output = Vec::new();
+        let style = StyleConfig {
+            use_colors: false,
+            ..StyleConfig::default()
+        };
+        info.write_syscall(style, None, false, false, &mut output)
+            .unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(
+            output.contains("[\"true\"], 0x2000 /* 3 vars */"),
+            "{output}"
+        );
+    }
 }

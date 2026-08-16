@@ -214,6 +214,7 @@ pub static TRACE_PROCESS: SysnoSet = SysnoSet::new(&[
 ]);
 
 pub static TRACE_SIGNAL: SysnoSet = SysnoSet::new(&[
+    kill,
     rt_sigaction,
     rt_sigprocmask,
     rt_sigreturn,
@@ -312,12 +313,19 @@ const ADDR: Option<SyscallArgType> = Some(SyscallArgType::Addr);
 const INT: Option<SyscallArgType> = Some(SyscallArgType::Int);
 const STR: Option<SyscallArgType> = Some(SyscallArgType::Str);
 const STRV: Option<SyscallArgType> = Some(SyscallArgType::StrArray);
+const STRVS: Option<SyscallArgType> = Some(SyscallArgType::StrArraySummary);
+const IN1: Option<SyscallArgType> = Some(SyscallArgType::InputBuffer(1));
+const IN2: Option<SyscallArgType> = Some(SyscallArgType::InputBuffer(2));
+const IN3: Option<SyscallArgType> = Some(SyscallArgType::InputBuffer(3));
+const OUT1: Option<SyscallArgType> = Some(SyscallArgType::OutputBuffer(1));
+const OUT2: Option<SyscallArgType> = Some(SyscallArgType::OutputBuffer(2));
+const OUT3: Option<SyscallArgType> = Some(SyscallArgType::OutputBuffer(3));
 
 pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // DESC
-    syscall!(read, INT, STR, INT),
+    syscall!(read, INT, OUT2, INT),
     // DESC
-    syscall!(write, INT, STR, INT),
+    syscall!(write, INT, IN2, INT),
     // DESC, FILE
     syscall!(open, STR, INT, INT),
     // DESC
@@ -348,9 +356,9 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     syscall!(rt_sigreturn),
     syscall!(ioctl, INT, INT, ADDR),
     // DESC
-    syscall!(pread64, INT, STR, INT, INT),
+    syscall!(pread64, INT, OUT2, INT, INT),
     // DESC
-    syscall!(pwrite64, INT, STR, INT, INT),
+    syscall!(pwrite64, INT, IN2, INT, INT),
     // DESC
     syscall!(readv, INT, ADDR, INT),
     // DESC
@@ -397,9 +405,9 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // NETWORK
     syscall!(accept, INT, ADDR, ADDR),
     // NETWORK
-    syscall!(sendto, INT, STR, INT, INT),
+    syscall!(sendto, INT, IN2, INT, INT, ADDR, INT),
     // NETWORK
-    syscall!(recvfrom, INT, STR, INT, INT, ADDR, ADDR),
+    syscall!(recvfrom, INT, OUT2, INT, INT, ADDR, ADDR),
     // NETWORK
     syscall!(sendmsg, INT, ADDR, INT),
     // NETWORK
@@ -427,7 +435,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // PROCESS
     syscall!(vfork, ADDR),
     // PROCESS
-    syscall!(execve, STR, STRV, STRV),
+    syscall!(execve, STR, STRV, STRVS),
     // PROCESS
     syscall!(exit, INT),
     // PROCESS
@@ -466,7 +474,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // DESC
     syscall!(getdents, INT, ADDR, INT),
     // FILE
-    syscall!(getcwd, STR, INT),
+    syscall!(getcwd, OUT1, INT),
     // FILE
     syscall!(chdir, STR),
     // DESC
@@ -486,7 +494,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // FILE
     syscall!(symlink, STR, STR),
     // FILE
-    syscall!(readlink, STR, STR, INT),
+    syscall!(readlink, STR, OUT2, INT),
     // FILE
     syscall!(chmod, STR, INT),
     // DESC
@@ -507,7 +515,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     syscall!(ptrace, ADDR, INT, ADDR, ADDR),
     // CREDS, PURE
     syscall!(getuid, ADDR),
-    syscall!(syslog, INT, STR, INT),
+    syscall!(syslog, INT, OUT2, INT),
     // CREDS, PURE
     syscall!(getgid, ADDR),
     // CREDS
@@ -618,15 +626,15 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // FILE
     syscall!(swapoff, STR),
     syscall!(reboot, INT, INT, INT, ADDR),
-    syscall!(sethostname, STR, INT),
-    syscall!(setdomainname, STR, INT),
+    syscall!(sethostname, IN1, INT),
+    syscall!(setdomainname, IN1, INT),
     syscall!(iopl, INT),
     syscall!(ioperm, INT, INT, INT),
     syscall!(create_module, STR, INT),
     syscall!(init_module, ADDR, INT, STR),
     syscall!(delete_module, STR, INT),
     syscall!(get_kernel_syms, ADDR),
-    syscall!(query_module, STR, INT, STR, INT, INT),
+    syscall!(query_module, STR, INT, OUT3, INT, INT),
     // FILE
     syscall!(quotactl, INT, STR, INT, ADDR),
     syscall!(nfsservctl, INT, ADDR, ADDR),
@@ -642,23 +650,23 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // DESC
     syscall!(readahead, INT, INT, INT),
     // FILE
-    syscall!(setxattr, STR, STR, ADDR, INT, INT),
+    syscall!(setxattr, STR, STR, IN3, INT, INT),
     // FILE
-    syscall!(lsetxattr, STR, STR, ADDR, INT, INT),
+    syscall!(lsetxattr, STR, STR, IN3, INT, INT),
     // DESC
-    syscall!(fsetxattr, INT, STR, ADDR, INT, INT),
+    syscall!(fsetxattr, INT, STR, IN3, INT, INT),
     // FILE
-    syscall!(getxattr, STR, STR, ADDR, INT),
+    syscall!(getxattr, STR, STR, OUT3, INT),
     // FILE
-    syscall!(lgetxattr, STR, STR, ADDR, INT),
+    syscall!(lgetxattr, STR, STR, OUT3, INT),
     // DESC
-    syscall!(fgetxattr, INT, STR, ADDR, INT),
+    syscall!(fgetxattr, INT, STR, OUT3, INT),
     // FILE
-    syscall!(listxattr, STR, STR, INT),
+    syscall!(listxattr, STR, OUT2, INT),
     // FILE
-    syscall!(llistxattr, STR, STR, INT),
+    syscall!(llistxattr, STR, OUT2, INT),
     // DESC
-    syscall!(flistxattr, INT, STR, INT),
+    syscall!(flistxattr, INT, OUT2, INT),
     // FILE
     syscall!(removexattr, STR, STR),
     // FILE
@@ -681,7 +689,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     syscall!(io_submit, INT, INT, ADDR),
     syscall!(io_cancel, INT, ADDR, ADDR),
     syscall!(get_thread_area, ADDR),
-    syscall!(lookup_dcookie, INT, STR, INT),
+    syscall!(lookup_dcookie, INT, OUT2, INT),
     // DESC
     syscall!(epoll_create, INT),
     syscall!(epoll_ctl_old, INT, INT, INT, ADDR),
@@ -729,9 +737,9 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     syscall!(mq_open, STR, INT),
     syscall!(mq_unlink, STR),
     // DESC
-    syscall!(mq_timedsend, INT, STR, INT, INT),
+    syscall!(mq_timedsend, INT, IN2, INT, INT),
     // DESC
-    syscall!(mq_timedreceive, INT, ADDR, INT, INT, ADDR),
+    syscall!(mq_timedreceive, INT, OUT2, INT, INT, ADDR),
     // DESC
     syscall!(mq_notify, INT, ADDR),
     // DESC
@@ -739,7 +747,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     syscall!(kexec_load, INT, INT, ADDR, INT),
     // PROCESS
     syscall!(waitid, INT, INT, INT, INT),
-    syscall!(add_key, STR, STR, ADDR, INT, INT),
+    syscall!(add_key, STR, STR, IN3, INT, INT),
     syscall!(request_key, STR, STR, STR, INT),
     syscall!(keyctl, INT),
     syscall!(ioprio_set, INT, INT),
@@ -773,7 +781,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // DESC, FILE
     syscall!(symlinkat, STR, INT, STR),
     // DESC, FILE
-    syscall!(readlinkat, INT, STR, STR, INT),
+    syscall!(readlinkat, INT, STR, OUT3, INT),
     // DESC, FILE
     syscall!(fchmodat, INT, STR, INT, INT),
     // DESC, FILE
@@ -862,7 +870,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // DESC, FILE
     syscall!(renameat2, INT, STR, INT, STR),
     syscall!(seccomp, INT, INT, ADDR),
-    syscall!(getrandom, STR, INT, INT),
+    syscall!(getrandom, OUT1, INT, INT),
     // DESC
     syscall!(memfd_create, STR, INT),
     // DESC
@@ -870,7 +878,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     // DESC
     syscall!(bpf, INT, ADDR, INT),
     // DESC, PROCESS
-    syscall!(execveat, INT, STR, STRV, STRV, INT),
+    syscall!(execveat, INT, STR, STRV, STRVS, INT),
     // DESC
     syscall!(userfaultfd, INT),
     syscall!(membarrier, INT, INT, INT),
@@ -887,7 +895,7 @@ pub static SYSCALLS: [Option<(Sysno, [Option<SyscallArgType>; 6])>; 452] = [
     syscall!(pkey_alloc, INT, INT),
     syscall!(pkey_free, INT),
     // DESC, FILE, FSTAT, STAT_LIKE
-    syscall!(statx, INT, STR, INT, INT, STR),
+    syscall!(statx, INT, STR, INT, INT, ADDR),
     syscall!(io_pgetevents),
     syscall!(rseq),
     // We jump from syscall number 334 to 424 here

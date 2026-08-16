@@ -3,7 +3,7 @@ use crate::arch::{
     TRACE_LSTAT, TRACE_MEMORY, TRACE_NETWORK, TRACE_PROCESS, TRACE_PURE, TRACE_SIGNAL, TRACE_STAT,
     TRACE_STATFS, TRACE_STATFS_LIKE, TRACE_STAT_LIKE,
 };
-use crate::syscall_info::RetCode;
+use crate::syscall_info::{RetCode, SyscallId};
 use anyhow::bail;
 use clap::{Parser, Subcommand};
 use libc::pid_t;
@@ -91,6 +91,7 @@ impl Args {
             SysnoSet::all().iter().map(|v| (v.name(), v)).collect();
         let mut expr_negation = false;
         let mut system_calls = SysnoSet::empty();
+        let mut has_syscall_filter = false;
 
         // Sort system calls listed with --expr into their category to handle them accordingly
         for token in &self.expr {
@@ -99,12 +100,15 @@ impl Args {
                 (Some(token_key), Some(mut token_value))
                     if token_key == "t" || token_key == "trace" =>
                 {
-                    if let Some(v) = token_value.strip_prefix('!') {
-                        token_value = v;
-                        expr_negation = true;
+                    has_syscall_filter = true;
+                    system_calls = SysnoSet::empty();
+                    expr_negation = false;
+                    while let Some(value) = token_value.strip_prefix('!') {
+                        token_value = value;
+                        expr_negation = !expr_negation;
                     }
 
-                    for part in token_value.split(',') {
+                    for part in token_value.split(',').filter(|part| !part.is_empty()) {
                         if let Some(part) = part.strip_prefix('/') {
                             // The '/' prefix followed by a regex pattern to match system calls
                             if let Ok(pattern) = Regex::new(part) {
@@ -140,11 +144,8 @@ impl Args {
                             });
                         } else {
                             // The optional '?' prefix will ignore unknown system calls
-                            let mut ignore_unknown = false;
-                            if let Some(v) = token_value.strip_prefix('?') {
-                                token_value = v;
-                                ignore_unknown = true;
-                            }
+                            let (part, ignore_unknown) =
+                                part.strip_prefix('?').map_or((part, false), |v| (v, true));
                             if let Ok(val) = Sysno::from_str(part) {
                                 system_calls.insert(val);
                             } else if !ignore_unknown {
@@ -164,7 +165,7 @@ impl Args {
             } else {
                 FilterRetCode::All
             },
-            sysno_filter: if system_calls.count() == 0 {
+            sysno_filter: if !has_syscall_filter {
                 FilterSysno::All
             } else if expr_negation {
                 FilterSysno::Except(system_calls)
@@ -193,7 +194,7 @@ pub struct Filter {
 }
 
 impl Filter {
-    pub fn matches(&mut self, sys_no: Sysno, res: RetCode) -> bool {
+    pub fn matches(&self, syscall: SyscallId, res: RetCode) -> bool {
         (
             // Should this result code be printed?
             match self.ret_code_filter {
@@ -205,8 +206,12 @@ impl Filter {
             // Should this sys_no be printed?
             match &self.sysno_filter {
                 FilterSysno::All => true,
-                FilterSysno::Only(sysno_set) => sysno_set.contains(sys_no),
-                FilterSysno::Except(sysno_set) => !sysno_set.contains(sys_no),
+                FilterSysno::Only(sysno_set) => syscall
+                    .known()
+                    .is_some_and(|sysno| sysno_set.contains(sysno)),
+                FilterSysno::Except(sysno_set) => syscall
+                    .known()
+                    .is_none_or(|sysno| !sysno_set.contains(sysno)),
             }
         )
     }
@@ -231,5 +236,29 @@ mod tests {
             args.command,
             Some(ArgCommand::Command(vec!["app".to_string()])),
         );
+    }
+
+    #[test]
+    fn optional_unknown_filter_stays_empty() {
+        let args = Args::parse_from(["lurk", "-e", "trace=?not_a_syscall", "app"]);
+        let filter = args.create_filter().unwrap();
+        assert!(!filter.matches(Sysno::read.into(), RetCode::Ok(0)));
+    }
+
+    #[test]
+    fn signal_category_does_not_include_stat() {
+        let args = Args::parse_from(["lurk", "-e", "trace=%signal", "app"]);
+        let filter = args.create_filter().unwrap();
+        assert!(filter.matches(Sysno::kill.into(), RetCode::Ok(0)));
+        assert!(!filter.matches(Sysno::stat.into(), RetCode::Ok(0)));
+    }
+
+    #[test]
+    fn later_trace_expression_replaces_the_previous_one() {
+        let args = Args::parse_from(["lurk", "-e", "trace=!openat", "-e", "trace=read", "app"]);
+        let filter = args.create_filter().unwrap();
+        assert!(filter.matches(Sysno::read.into(), RetCode::Ok(0)));
+        assert!(!filter.matches(Sysno::write.into(), RetCode::Ok(1)));
+        assert!(!filter.matches(Sysno::openat.into(), RetCode::Ok(3)));
     }
 }
